@@ -1,18 +1,13 @@
-#ifndef __MVCTL_H
-#define __MVCTL_H
+#ifndef __BINTAIL_H
+#define __BINTAIL_H
 
 #include <vector>
-#include <iostream>
-#include <iomanip>
 #include <memory>
-#include <list>
 #include <string>
 #include <gelf.h>
-#include <set>
 
 #include "arch.h"
-
-using namespace std;
+#include "mvvar.h"
 
 #define ANSI_COLOR_RED     "\x1b[31m"
 #define ANSI_COLOR_GREEN   "\x1b[32m"
@@ -22,113 +17,18 @@ using namespace std;
 #define ANSI_COLOR_CYAN    "\x1b[36m"
 #define ANSI_COLOR_RESET   "\x1b[0m"
 
-typedef uint64_t vaddr_cstr;
-typedef uint64_t vaddr_text;
-typedef uint64_t vaddr_data;
-
-class MVFn;
-//-----------------------------libmultiverse-header----------------------------
-typedef enum  {
-    PP_TYPE_INVALID,
-    PP_TYPE_X86_CALL,
-    PP_TYPE_X86_CALL_INDIRECT,
-    PP_TYPE_X86_JUMP,
-} mv_info_patchpoint_type;
-
-struct mv_patchpoint {
-    struct mv_patchpoint *next;
-    MVFn* function;
-    vaddr_text location;                // == callsite call_label
-    mv_info_patchpoint_type type;
-
-    // Here we swap in the code, we overwrite
-    unsigned char swapspace[6];
-};
-
-struct mv_info_assignment {
-    union {
-        vaddr_data location;
-        int info; // Runtime link
-    } variable;
-    uint32_t lower_bound;
-    uint32_t upper_bound;
-};
-
-typedef enum {
-    MVFN_TYPE_NONE,
-    MVFN_TYPE_NOP,
-    MVFN_TYPE_CONSTANT,
-    MVFN_TYPE_CLI,
-    MVFN_TYPE_STI,
-} mvfn_type_t;
-
-struct mv_info_mvfn {
-    // static
-    vaddr_text function_body;    // A pointer to the mvfn's function body
-    unsigned int n_assignments;  // The mvfn's variable assignments
-    vaddr_data assignments;      // Array of mv_info_assignment
-
-    // runtime
-    int type;                    // This is be interpreted as mv_type_t
-                                 // (declared as integer to ensure correct size)
-    uint32_t constant;
-};
-
-struct mv_info_fn {
-    // static
-    vaddr_cstr name;             // Functions's symbol name
-    vaddr_text function_body;    // A pointer to the original (generic) function body
-    unsigned int n_mv_functions; // Specialized multiverse variant functions of this function
-    vaddr_data mv_functions;     // Array of mv_info_mvfn
-
-    // runtime
-    struct mv_patchpoint *patchpoints_head;  // Patchpoints as linked list TODO: arch-specific
-    struct mv_info_mvfn *active_mvfn; // The currently active mvfn
-};
-
-struct mv_info_fn_ref {
-    struct mv_info_fn_ref *next;
-    struct mv_info_fn *fn;
-};
-
-struct mv_info_callsite {
-    // static
-    vaddr_text function_body;
-    vaddr_text call_label;
-};
-
-struct mv_info_var {
-    vaddr_cstr name;
-    vaddr_data variable_location;         // A pointer to the variable
-    union {
-        unsigned int info;
-        struct {
-            unsigned int
-                variable_width : 4,  // Width of the variable in bytes
-                reserved       : 25, // Currently not used
-                flag_tracked   : 1,  // Determines if the variable is tracked
-                flag_signed    : 1,  // Determines if the variable is signed
-                flag_bound     : 1;  // 1 if the variable is bound, 0 if not
-                                     // -> this flag is mutable
-        };
-    };
-
-    // runtime
-    struct mv_info_fn_ref *functions_head; // Functions referening this variable
-};
-//--------------------------------multiverse.h---------------------------------
 class Section {
 public:
     Section() :sz{0} {}
 
     virtual void load(Elf * elf, Elf_Scn * s);
 
-    string get_string(vaddr_cstr addr);
-    uint8_t* get_func_loc(vaddr_text addr);
-    void* get_data_loc(vaddr_data addr);
-    uint64_t get_value(vaddr_data addr);
-    void  set_data_int(vaddr_data addr, int value);
-    void  set_data_ptr(vaddr_data addr, uint64_t value);
+    string get_string(uint64_t addr);
+    uint8_t* get_func_loc(uint64_t addr);
+    void* get_data_loc(uint64_t addr);
+    uint64_t get_value(uint64_t addr);
+    void  set_data_int(uint64_t addr, int value);
+    void  set_data_ptr(uint64_t addr, uint64_t value);
     void set_dirty();
     void add_fixed(uint64_t location) { fixed.push_back(location); }
     void print(size_t elem_sz);
@@ -169,85 +69,7 @@ public:
     std::vector<struct mv_info_callsite> lst;
 };
 
-class MVVar;
-class MVassign {
-public:
-    MVassign(struct mv_info_assignment& _assign);
-    vaddr_data location();
-    bool active();
-    void link_var(MVVar* _var);
-    void print();
-    MVVar* var;
-private:
-    struct mv_info_assignment assign;
-};
-
-class MVFn;
-class MVmvfn {
-public:
-    MVmvfn(struct mv_info_mvfn& _mvfn, Section* data, Section* text);
-    void check_var(MVVar* var, MVFn* fn);
-    void print(bool active, Section* data, Section* text);
-    bool active();
-    bool frozen();
-
-    uint64_t location() { return mvfn.function_body; }
-    struct mv_info_mvfn mvfn;
-private:
-    vector<unique_ptr<MVassign>> assigns;
-};
-
-class MVPP;
-class MVFn {
-public:
-    MVFn(struct mv_info_fn& _fn, Section* data, Section* text);
-    void print(Section* rodata, Section* data, Section* text);
-    void check_var(MVVar* var);
-    void add_cs(struct mv_info_callsite& cs, Section* text);
-    vaddr_text location();
-    void apply(Section* text);
-    struct mv_info_fn fn;
-    bool frozen;
-    uint64_t active;
-private:
-    vector<unique_ptr<MVPP>> pps;
-    vector<unique_ptr<MVmvfn>> mvfns;
-};
-
-class MVPP {
-public:
-    MVPP(MVFn* fn);
-    MVPP(struct mv_info_callsite& cs, MVFn* fn, Section* text);
-    bool invalid();
-    void print(Section* text);
-    struct mv_patchpoint pp;
-private:
-    bool fptr;
-};
-
-class MVVar {
-public:
-    MVVar(struct mv_info_var _var, Section* rodata, Section* data);
-    void print(Section* rodata, Section* data, Section* text);
-    void check_fns(vector<unique_ptr<MVFn>>& fns);
-    void link_fn(MVFn* fn);
-    void set_value(int v, Section* data);
-    void apply(Section* text);
-    vaddr_data location();
-
-    string& name() { return _name; }
-    int64_t value() { return _value; }
-
-    bool frozen;
-    struct mv_info_var var;
-private:
-    set<MVFn*> fns;
-    string _name;
-    int64_t _value;
-};
-
-
-class MVVars : public Section {
+class VarSection : public Section {
 public:
     void load(Elf* elf, Elf_Scn * s);
     void parse(Section* rodata, Section* data);
@@ -267,10 +89,10 @@ private:
     vector<unique_ptr<MVFn>> fns;
 };
 
-class MVCTL {
+class Bintail {
 public:
-    MVCTL(string filename);
-    ~MVCTL();
+    Bintail(string filename);
+    ~Bintail();
 
     void print_reloc();
     void print_sym();
@@ -294,7 +116,7 @@ public:
 
     /* MV Sections */
     FnSection mvfn;
-    MVVars mvvar;
+    VarSection mvvar;
     CsSection mvcs;
 
 private:

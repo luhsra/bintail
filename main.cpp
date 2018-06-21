@@ -1,28 +1,26 @@
 #include <iostream>
 #include <string>
-#include <cstdlib>
-#include <regex>
+#include <vector>
 #include <getopt.h>
-using namespace std;
 
 #include "bintail.h"
 
-void help()
-{
-    cout << "USAGE: bintail [-d] [-w] -f <filename>\n"
-         << "Tailor multiverse executable\n"
-         << "\n"
-         << "-a var         Apply variable.\n"
-         << "-d             Display multiverse configuration.\n"
-         << "-s var=value   Set variable to value.\n"
-         << "-t             Trim fixed multiverse data.\n"
-         << "-w             Write file.\n"
-         << "-y             Dump Symbols.\n"
-         << "\n";
+void help() {
+    std::cout << "USAGE: bintail [-d] [-w] -f <filename>\n"
+              << "Tailor multiverse executable\n"
+              << "\n"
+              << "-a var         Apply variable.\n"
+              << "-d             Display multiverse configuration.\n"
+              << "-f             File to edit.\n"
+              << "-h             Print help.\n"
+              << "-s var=value   Set variable to value.\n"
+              << "-t             Trim fixed multiverse data.\n"
+              << "-w             Write file.\n"
+              << "-y             Dump Symbols.\n"
+              << "\n";
 }
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
     auto filename = "./"s;
     auto display = false;
     auto write = false;
@@ -65,7 +63,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    MVCTL bintail{filename};
+    Bintail bintail{filename};
     bintail.load();
 
     for (auto& e : changes)

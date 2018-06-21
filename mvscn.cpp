@@ -1,7 +1,9 @@
 #include <iostream>
+#include <iomanip>
 #include <algorithm>
 #include <string.h>
 #include <cassert>
+
 #include "bintail.h"
 
 //------------------FnSection----------------------------------
@@ -144,16 +146,14 @@ void Section::print(size_t row) {
     
 }
 
-uint64_t Section::get_data_offset(uint64_t addr)
-{
+uint64_t Section::get_data_offset(uint64_t addr) {
     auto offset = addr - shdr.sh_addr;
     assert(addr > shdr.sh_addr);
     assert(addr <= shdr.sh_addr + shdr.sh_size);
     return offset;
 }
 
-string Section::get_string(vaddr_cstr addr)
-{
+string Section::get_string(uint64_t addr) {
     string str("");
     auto offset = get_data_offset(addr);
 
@@ -176,8 +176,7 @@ string Section::get_string(vaddr_cstr addr)
  * get ptr into data buffer where the function is mapped
  * ToDo(Felix): Use something else
  */
-uint8_t* Section::get_func_loc(vaddr_text addr)
-{
+uint8_t* Section::get_func_loc(uint64_t addr) {
     auto offset = get_data_offset(addr);
 
     Elf_Data * d = nullptr;
@@ -193,18 +192,15 @@ uint8_t* Section::get_func_loc(vaddr_text addr)
     return nullptr;
 }
 
-void* Section::get_data_loc(vaddr_data addr)
-{
+void* Section::get_data_loc(uint64_t addr) {
     return get_func_loc(addr);
 }
 
-uint64_t Section::get_value(vaddr_data addr)
-{
+uint64_t Section::get_value(uint64_t addr) {
     return *((uint64_t*)(get_func_loc(addr)));
 }
 
-void Section::set_data_int(vaddr_data addr, int value)
-{
+void Section::set_data_int(uint64_t addr, int value) {
     auto offset = get_data_offset(addr);
 
     /* single data obj on read, never add another */
@@ -217,8 +213,7 @@ void Section::set_data_int(vaddr_data addr, int value)
     elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
 }
 
-void Section::set_data_ptr(vaddr_data addr, uint64_t value)
-{
+void Section::set_data_ptr(uint64_t addr, uint64_t value) {
     auto offset = get_data_offset(addr);
 
     /* single data obj on read, never add another */
@@ -243,4 +238,120 @@ void Section::load(Elf* e, Elf_Scn* s) {
     scn = s;
     gelf_getshdr(s, &shdr);
     sz = shdr.sh_size;
+}
+
+//---------------------VarSection----------------------------------------------
+void VarSection::regenerate(Symbols *syms, Section* data) {
+    vector<struct mv_info_var> nlst;
+
+    for (auto& e:vars) {
+        if (e->frozen)
+            continue;
+        nlst.push_back(e->var);
+    }
+
+    auto d = elf_getdata(scn, nullptr);
+    auto buf = (struct mv_info_var*)d->d_buf;
+    copy(nlst.begin(), nlst.end(), buf);
+
+    auto size = nlst.size()*sizeof(struct mv_info_var);
+
+    auto sym = syms->get_sym_val("__stop___multiverse_var_ptr"s);
+    uint64_t sec_end_old = data->get_value(sym);
+    uint64_t sec_end_new = sec_end_old - shdr.sh_size + size;
+
+    data->set_data_ptr(sym, sec_end_new);
+    d->d_size = size;
+    shdr.sh_size = size;
+    set_dirty();
+}
+
+void VarSection::mark_fixed(FnSection* fn_sec, CsSection* cs_sec) {
+    for (auto& f : fns) {
+        if (f->frozen) {
+            fn_sec->add_fixed(f->location());
+            cs_sec->add_fixed(f->location());
+        }
+    }
+    for (auto& v : vars) {
+        if (v->frozen) {
+            add_fixed(v->location());
+        }
+    }
+}
+
+void VarSection::parse_assigns() {
+    /**
+     * find var & save ptr to it
+     *    add fn to var.functions_head
+     */
+    for (auto& var: vars) {
+        var->check_fns(fns);
+    }
+}
+
+/**
+ * For all callsites:
+ * 1. Find function
+ * 2. Create patchpoint
+ * 3. Append pp to fn ll
+ */
+void VarSection::add_cs(CsSection* mvcs, Section* text) {
+    for (auto& cs : mvcs->lst) {
+        for (auto& fn : fns) {
+            if (fn->location() != cs.function_body )
+                continue;
+
+            fn->add_cs(cs, text);
+        }
+    }
+}
+
+void VarSection::add_fns(FnSection* mvfn, Section* data, Section* text) {
+    for (auto& fn : mvfn->lst) {
+        auto f = make_unique<MVFn>(fn, data, text);
+        fns.push_back(move(f));
+    }
+
+    parse_assigns();
+}
+
+void VarSection::load(Elf* e, Elf_Scn * s) {
+    elf = e;
+    scn = s;
+    gelf_getshdr(s, &shdr);
+
+    Elf_Data * d = nullptr;
+    while ((d = elf_getdata(scn, d)) != nullptr) {
+        for (auto i = 0; i * sizeof(struct mv_info_var) < d->d_size; i++) {
+            lst.push_back(*((struct mv_info_var*)d->d_buf + i));
+            sz++;
+        }
+    }
+}
+
+void VarSection::parse(Section* rodata, Section* data) {
+    for (auto& e : lst) {
+        auto var = make_unique<MVVar>(e, rodata, data);
+        vars.push_back(move(var));
+    }
+}
+
+void VarSection::apply_var(string var_name, Section* text) {
+    for (auto& e : vars) {
+        if (var_name == e->name())
+            e->apply(text);
+    }
+}
+
+void VarSection::set_var(string var_name, int v, Section* data) {
+    for (auto& e : vars) {
+        if (var_name == e->name())
+            e->set_value(v, data);
+    }
+}
+
+void VarSection::print(Section* rodata, Section* data, Section* text) {
+    for (auto& var : vars)
+        var->print(rodata, data, text);
 }

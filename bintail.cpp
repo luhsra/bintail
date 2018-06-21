@@ -15,8 +15,7 @@
 #include "arch.h"
 using namespace std;
 
-void MVCTL::load()
-{
+void Bintail::load() {
     Elf_Scn * scn = nullptr;
     GElf_Shdr shdr;
     char * shname;
@@ -51,8 +50,7 @@ void MVCTL::load()
     mvvar.add_cs(&mvcs, &text);
 }
 
-void MVCTL::change(string change_str)
-{
+void Bintail::change(string change_str) {
     string var_name;
     int value;
     smatch m;
@@ -64,8 +62,7 @@ void MVCTL::change(string change_str)
     mvvar.set_var(var_name, value, &data);
 }
 
-void MVCTL::apply(string change_str)
-{
+void Bintail::apply(string change_str) {
     string var_name;
     smatch m;
 
@@ -75,7 +72,7 @@ void MVCTL::apply(string change_str)
     mvvar.apply_var(var_name, &text);
 }
 
-void MVCTL::trim() {
+void Bintail::trim() {
     mvvar.mark_fixed(&mvfn, &mvcs);
     mvfn.regenerate(&symbols, &data);
     mvcs.regenerate(&symbols, &data);
@@ -83,8 +80,7 @@ void MVCTL::trim() {
 }
 
 // See: libelf by example
-void MVCTL::write()
-{
+void Bintail::write() {
     if (elf_update(e, ELF_C_NULL) < 0)
         errx(1, "elf_update(null) failed.");
 
@@ -92,7 +88,7 @@ void MVCTL::write()
         errx(1, "elf_update(write) failed.");
 }
 
-//void MVCTL::print_reloc()
+//void Bintail::print_reloc()
 //{
 //    GElf_Rela rela;
 //    GElf_Shdr shdr;
@@ -119,8 +115,7 @@ void MVCTL::write()
 //    }
 //}
 
-void MVCTL::print_sym()
-{
+void Bintail::print_sym() {
     cout << ANSI_COLOR_YELLOW "MVVAR syms: \n" ANSI_COLOR_RESET;
     symbols.print_sym(e, mvvar.ndx() );
     cout << ANSI_COLOR_YELLOW "MVFN syms: \n" ANSI_COLOR_RESET;
@@ -131,13 +126,11 @@ void MVCTL::print_sym()
     symbols.print_sym(e, data.ndx() );
 }
 
-void MVCTL::print()
-{
+void Bintail::print() {
     mvvar.print(&rodata, &data, &text);
 }
 
-MVCTL::MVCTL(string filename)
-{
+Bintail::Bintail(string filename) {
     /**
      * init libelf state
      */ 
@@ -158,8 +151,7 @@ MVCTL::MVCTL(string filename)
 
 }
 
-MVCTL::~MVCTL()
-{
+Bintail::~Bintail() {
     elf_end(e);
     close(fd);
 }
