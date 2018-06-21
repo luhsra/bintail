@@ -51,7 +51,7 @@ public:
     /**
       @brief applies the mvfn to the patchpoint
     */
-    void patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text);
+    void patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* mvtext);
 
     /**
        @brief restores the code to the original form

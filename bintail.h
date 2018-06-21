@@ -29,6 +29,7 @@ public:
     void set_dirty();
     void add_fixed(uint64_t location) { fixed.push_back(location); }
     void print(size_t elem_sz);
+    bool inside(uint64_t addr);
 
     size_t ndx()   { return elf_ndxscn(scn); }
     size_t vaddr() { return shdr.sh_addr; }
@@ -76,7 +77,7 @@ public:
     void add_cs(CsSection* mvcs, Section* text);
     void add_fns(FnSection* mvfn, Section* data, Section* text);
     void set_var(std::string var_name, int v, Section* data);
-    void apply_var(std::string var_name, Section* text);
+    void apply_var(std::string var_name, Section* text, Section* mvtext);
     void mark_fixed(FnSection* fn_sec, CsSection* cs_sec);
     void regenerate(Symbols* syms, Section* data);
 
@@ -117,6 +118,8 @@ public:
     FnSection mvfn;
     VarSection mvvar;
     CsSection mvcs;
+    Section mvdata;
+    Section mvtext;
 
 private:
     /* Elf file */

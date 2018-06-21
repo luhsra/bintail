@@ -45,9 +45,15 @@ void MVPP::decode_callsite(MVFn* fn, struct mv_info_callsite& cs,
     fn->active = callee;
 }
 
-void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text) {
-    auto location = text->get_func_loc(pp.location);
-    auto dest = text->get_func_loc(mvfn->function_body);
+void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* mvtext) {
+    Section* txt;
+    if (text->inside(pp.location))
+        txt = text;
+    else
+        txt = mvtext;
+
+    auto location = txt->get_func_loc(pp.location);
+    auto dest = mvtext->get_func_loc(mvfn->function_body);
 
     switch(pp.type) {
         case PP_TYPE_X86_JUMP:

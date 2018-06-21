@@ -127,7 +127,7 @@ public:
     void check_var(MVVar* var);
     void add_cs(struct mv_info_callsite& cs, Section* text);
     uint64_t location();
-    void apply(Section* text);
+    void apply(Section* text, Section* mvtext);
     struct mv_info_fn fn;
     bool frozen;
     uint64_t active;
@@ -143,7 +143,7 @@ public:
     void check_fns(std::vector<std::unique_ptr<MVFn>>& fns);
     void link_fn(MVFn* fn);
     void set_value(int v, Section* data);
-    void apply(Section* text);
+    void apply(Section* text, Section* mvtext);
     uint64_t location();
 
     std::string& name() { return _name; }

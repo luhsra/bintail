@@ -70,14 +70,14 @@ void MVmvfn::decode_mvfn_body(struct mv_info_mvfn *info, uint8_t * op) {
 }
 
 
-MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, Section* data, Section* text) {
+MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, Section* mvdata, Section* text) {
     mvfn = _mvfn;
 
     decode_mvfn_body(&mvfn,
             text->get_func_loc(mvfn.function_body));
 
     auto assign_array = static_cast<struct mv_info_assignment*>
-        (data->get_data_loc(mvfn.assignments));
+        (mvdata->get_data_loc(mvfn.assignments));
     for (size_t x = 0; x < mvfn.n_assignments; x++) {
         auto assign = make_unique<MVassign>(assign_array[x]);
         assigns.push_back(move(assign));
@@ -132,11 +132,11 @@ void MVmvfn::check_var(MVVar* var, MVFn* fn) {
 }
 
 //---------------------MVFn----------------------------------------------------
-void MVFn::apply(Section* text) {
+void MVFn::apply(Section* text, Section* mvtext) {
     for (auto& e : mvfns) {
         if (e->active() && e->frozen()) {
             for (auto& p : pps) {
-                p->patchpoint_apply(&e->mvfn, text);
+                p->patchpoint_apply(&e->mvfn, text, mvtext);
             }
             frozen = true;
         }
@@ -152,7 +152,7 @@ uint64_t MVFn::location() {
     return fn.function_body;
 }
 
-MVFn::MVFn(struct mv_info_fn& _fn, Section* data, Section* text)
+MVFn::MVFn(struct mv_info_fn& _fn, Section* mvdata, Section* text)
     :frozen{false} {
     fn = _fn;
 
@@ -165,9 +165,9 @@ MVFn::MVFn(struct mv_info_fn& _fn, Section* data, Section* text)
         return;
 
     auto mvfn_array = static_cast<struct mv_info_mvfn*>
-        (data->get_data_loc(fn.mv_functions));
+        (mvdata->get_data_loc(fn.mv_functions));
     for (size_t j = 0; j < fn.n_mv_functions; j++) {
-        auto mf = make_unique<MVmvfn>(mvfn_array[j], data, text);
+        auto mf = make_unique<MVmvfn>(mvfn_array[j], mvdata, text);
         mvfns.push_back(move(mf));
     }
 }
@@ -235,29 +235,18 @@ bool MVPP::invalid() {
 MVVar::MVVar(struct mv_info_var _var, Section* rodata, Section* data)
         :frozen{false}, var{_var} {
     _name += rodata->get_string(var.name);
+    _value = data->get_value(var.variable_location);
 
-    assert(!var.flag_signed);
-
-    auto vptr = data->get_data_loc(var.variable_location);
-
-    if (var.variable_width == 1)
-        _value = static_cast<uint64_t>(*(static_cast<uint8_t*>(vptr)));
-    else if (var.variable_width == 2)
-        _value = static_cast<uint64_t>(*(static_cast<uint16_t*>(vptr)));
-    else if (var.variable_width == 4)
-        _value = static_cast<uint64_t>(*(static_cast<uint32_t*>(vptr)));
-    else if (var.variable_width == 8)
-        _value = static_cast<uint64_t>(*(static_cast<uint64_t*>(vptr)));
-    else
-        assert(false);
+    // Discard bytes > width
+    auto b = var.variable_width * 8;
+    _value -= (_value >> b) << b;
 }
 
 void MVVar::print(Section* rodata, Section* data, Section* text) {
     cout << "Var: " << rodata->get_string(var.name)
         << "@.data:0x" << location() - data->vaddr() << "\n";
-    for (auto& fn : fns) {
+    for (auto& fn : fns)
         fn->print(rodata, data, text);
-    }
 }
 
 void MVVar::link_fn(MVFn* fn) {
@@ -279,8 +268,8 @@ void MVVar::check_fns(vector<unique_ptr<MVFn>>& fns) {
         fn->check_var(this);
 }
 
-void MVVar::apply(Section* text) {
+void MVVar::apply(Section* text, Section* mvtext) {
     frozen = true;
     for (auto& e : fns)
-        e->apply(text);
+        e->apply(text, mvtext);
 }

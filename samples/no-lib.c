@@ -3,7 +3,11 @@
  */
 
 #include <stdio.h>
+#ifdef MVINSTALLED
 #include <multiverse/multiverse.h>
+#else
+#include "multiverse.h"
+#endif
 
 typedef enum {false, true} bool;
 

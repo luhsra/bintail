@@ -147,13 +147,12 @@ void Section::print(size_t row) {
         if (n%4 == 3)   printf(" ");
         if (n%row == row-1) printf("\n");
     }
-    
 }
 
 uint64_t Section::get_data_offset(uint64_t addr) {
     auto offset = addr - shdr.sh_addr;
-    assert(addr > shdr.sh_addr);
-    assert(addr <= shdr.sh_addr + shdr.sh_size);
+    assert(offset >= 0);
+    assert(offset < shdr.sh_size);
     return offset;
 }
 
@@ -174,6 +173,11 @@ string Section::get_string(uint64_t addr) {
         break; // can clip strings
     }
     return str;
+}
+
+bool Section::inside(uint64_t addr) {
+    auto offset = addr - shdr.sh_addr;
+    return offset < shdr.sh_size;
 }
 
 /**
@@ -311,9 +315,9 @@ void VarSection::add_cs(CsSection* mvcs, Section* text) {
     }
 }
 
-void VarSection::add_fns(FnSection* mvfn, Section* data, Section* text) {
+void VarSection::add_fns(FnSection* mvfn, Section* mvdata, Section* text) {
     for (auto& fn : mvfn->lst) {
-        auto f = make_unique<MVFn>(fn, data, text);
+        auto f = make_unique<MVFn>(fn, mvdata, text);
         fns.push_back(move(f));
     }
 
@@ -341,10 +345,10 @@ void VarSection::parse(Section* rodata, Section* data) {
     }
 }
 
-void VarSection::apply_var(string var_name, Section* text) {
+void VarSection::apply_var(string var_name, Section* text, Section* mvtext) {
     for (auto& e : vars) {
         if (var_name == e->name())
-            e->apply(text);
+            e->apply(text, mvtext);
     }
 }
 

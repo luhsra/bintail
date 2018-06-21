@@ -1,6 +1,18 @@
 CC = gcc
 
-CFLAGS  = -ggdb -fplugin=multiverse -O2 -Wextra
+ifeq (${SESSION},ubuntu)
+	MV_DIR=../../../multiverse
+	PLUGIN_DIR=$(MV_DIR)/gcc-plugin
+	PLUGIN=$(PLUGIN_DIR)/multiverse.so
+	LIBRARY_DIR=$(MV_DIR)/libmultiverse
+	LIBRARY=$(LIBRARY_DIR)/libmultiverse.a
+	EXTRA_DEPS=$(LIBRARY) $(PLUGIN)
+	
+	CFLAGS  = -fplugin=$(PLUGIN) -ggdb -I$(LIBRARY_DIR) -O2 -Wextra
+	LDFLAGS = -L$(LIBRARY_DIR)
+else
+	CFLAGS  = -ggdb -fplugin=multiverse -DMVINSTALLED -O2 -Wextra
+endif
 LDLIBS  = -lmultiverse
 
 SOURCES=$(shell echo *.c)

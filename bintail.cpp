@@ -32,6 +32,10 @@ void Bintail::load() {
             mvfn.load(e, scn);
         else if ("__multiverse_callsite_"s == shname)
             mvcs.load(e, scn);
+        else if ("__multiverse_data_"s == shname)
+            mvdata.load(e, scn);
+        else if ("__multiverse_text_"s == shname)
+            mvtext.load(e, scn);
         else if (".rodata"s == shname)
             rodata.load(e, scn);
         else if (".data"s == shname)
@@ -47,7 +51,7 @@ void Bintail::load() {
     assert(data.size() > 0 && text.size() > 0 && rodata.size() > 0);
 
     mvvar.parse(&rodata, &data);
-    mvvar.add_fns(&mvfn, &data, &text);
+    mvvar.add_fns(&mvfn, &mvdata, &mvtext);
     mvvar.add_cs(&mvcs, &text);
 }
 
@@ -70,7 +74,7 @@ void Bintail::apply(string change_str) {
     regex_search(change_str, m, regex(R"((\w+))"));
     var_name = m.str(1);
 
-    mvvar.apply_var(var_name, &text);
+    mvvar.apply_var(var_name, &text, &mvtext);
 }
 
 void Bintail::trim() {
