@@ -6,9 +6,6 @@
 #include <string>
 #include <gelf.h>
 
-#include "arch.h"
-#include "mvvar.h"
-
 #define ANSI_COLOR_RED     "\x1b[31m"
 #define ANSI_COLOR_GREEN   "\x1b[32m"
 #define ANSI_COLOR_YELLOW  "\x1b[33m"
@@ -23,7 +20,7 @@ public:
 
     virtual void load(Elf * elf, Elf_Scn * s);
 
-    string get_string(uint64_t addr);
+    std::string get_string(uint64_t addr);
     uint8_t* get_func_loc(uint64_t addr);
     void* get_data_loc(uint64_t addr);
     uint64_t get_value(uint64_t addr);
@@ -50,9 +47,9 @@ class Symbols : public Section {
 public:
     void load(Elf* elf, Elf_Scn * s);
     void print_sym(Elf * elf, size_t shndx);
-    size_t get_sym_val(string symbol);
+    size_t get_sym_val(std::string symbol);
 private:
-    std::vector<unique_ptr<GElf_Sym>> syms;
+    std::vector<std::unique_ptr<GElf_Sym>> syms;
 };
 
 class FnSection : public Section {
@@ -69,6 +66,8 @@ public:
     std::vector<struct mv_info_callsite> lst;
 };
 
+class MVVar;
+class MVFn;
 class VarSection : public Section {
 public:
     void load(Elf* elf, Elf_Scn * s);
@@ -76,8 +75,8 @@ public:
     void print(Section* rodata, Section* data, Section* text);
     void add_cs(CsSection* mvcs, Section* text);
     void add_fns(FnSection* mvfn, Section* data, Section* text);
-    void set_var(string var_name, int v, Section* data);
-    void apply_var(string var_name, Section* text);
+    void set_var(std::string var_name, int v, Section* data);
+    void apply_var(std::string var_name, Section* text);
     void mark_fixed(FnSection* fn_sec, CsSection* cs_sec);
     void regenerate(Symbols* syms, Section* data);
 
@@ -85,13 +84,13 @@ public:
 private:
     void parse_assigns();
 
-    vector<shared_ptr<MVVar>> vars;
-    vector<unique_ptr<MVFn>> fns;
+    std::vector<std::shared_ptr<MVVar>> vars;
+    std::vector<std::unique_ptr<MVFn>> fns;
 };
 
 class Bintail {
 public:
-    Bintail(string filename);
+    Bintail(std::string filename);
     ~Bintail();
 
     void print_reloc();
@@ -106,8 +105,8 @@ public:
     void load();
     void write();
     void trim();
-    void change(string change_str);
-    void apply(string apply_str);
+    void change(std::string change_str);
+    void apply(std::string apply_str);
 
     Section rodata;
     Section data;

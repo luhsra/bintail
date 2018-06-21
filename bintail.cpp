@@ -12,7 +12,8 @@
 #include <regex>
 
 #include "bintail.h"
-#include "arch.h"
+#include "mvpp.h"
+
 using namespace std;
 
 void Bintail::load() {

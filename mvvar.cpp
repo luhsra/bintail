@@ -3,9 +3,10 @@
 #include <cassert>
 #include <vector>
 #include <string>
+#include <cstdlib>
 using namespace std;
 
-#include "arch.h"
+#include "mvpp.h"
 #include "bintail.h"
 
 //------------------MVassign-----------------------------------
@@ -39,10 +40,40 @@ void MVassign::print() {
 }
 
 //---------------------MVmvfn--------------------------------------------------
+static int is_ret(uint8_t* addr) {
+    //    c3: retq
+    // f3 c3: repz retq
+    return addr[0] == 0xc3 || (addr[0] == 0xf3 && addr[1] == 0xc3);
+}
+
+void MVmvfn::decode_mvfn_body(struct mv_info_mvfn *info, uint8_t * op) {
+    // 31 c0: xor    %eax,%eax
+    //    c3: retq
+    if ((op[0] == 0x31 && op[1] == 0xc0) && is_ret(op + 2)) {
+        // multiverse_os_print("eax = 0\n");
+        info->type = MVFN_TYPE_CONSTANT;
+        info->constant = 0;
+    } else if (op[0] == 0xb8 && is_ret(op + 5)) {
+        info->type = MVFN_TYPE_CONSTANT;
+        info->constant = *(uint32_t *)(op +1);
+        // multiverse_os_print("eax = %d\n", info->constant);
+    } else if (is_ret(op)) {
+        // multiverse_os_print("NOP\n");
+        info->type = MVFN_TYPE_NOP;
+    } else if (op[0] == 0xfa && is_ret(op + 1)) {
+        info->type = MVFN_TYPE_CLI;
+    } else if (op[0] == 0xfb&& is_ret(op + 1)) {
+        info->type = MVFN_TYPE_STI;
+    } else {
+        info->type = MVFN_TYPE_NONE;
+    }
+}
+
+
 MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, Section* data, Section* text) {
     mvfn = _mvfn;
 
-    multiverse_arch_decode_mvfn_body(&mvfn,
+    decode_mvfn_body(&mvfn,
             text->get_func_loc(mvfn.function_body));
 
     auto assign_array = static_cast<struct mv_info_assignment*>
@@ -105,7 +136,7 @@ void MVFn::apply(Section* text) {
     for (auto& e : mvfns) {
         if (e->active() && e->frozen()) {
             for (auto& p : pps) {
-                multiverse_arch_patchpoint_apply(&e->mvfn, &p->pp, text);
+                p->patchpoint_apply(&e->mvfn, text);
             }
             frozen = true;
         }
@@ -172,13 +203,13 @@ void MVFn::print(Section* rodata, Section* data, Section* text) {
 
 //---------------------MVPP----------------------------------------------------
 MVPP::MVPP(struct mv_info_callsite& cs, MVFn* fn, Section* text) {
-    multiverse_arch_decode_callsite(fn, cs, &pp, text);
+    decode_callsite(fn, cs, text);
     assert(!invalid());
 }
 
 MVPP::MVPP(MVFn* fn) {
     fptr = (fn->fn.n_mv_functions == 0);
-    multiverse_arch_decode_function(fn, &pp);
+    decode_function(fn);
     assert(!invalid());
 }
 

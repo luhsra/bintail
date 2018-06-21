@@ -9,23 +9,6 @@
 
 class MVFn;
 //-----------------------------libmultiverse-header----------------------------
-typedef enum  {
-    PP_TYPE_INVALID,
-    PP_TYPE_X86_CALL,
-    PP_TYPE_X86_CALL_INDIRECT,
-    PP_TYPE_X86_JUMP,
-} mv_info_patchpoint_type;
-
-struct mv_patchpoint {
-    struct mv_patchpoint *next;
-    MVFn* function;
-    uint64_t location;                // == callsite call_label
-    mv_info_patchpoint_type type;
-
-    // Here we swap in the code, we overwrite
-    unsigned char swapspace[6];
-};
-
 struct mv_info_assignment {
     union {
         uint64_t location;
@@ -120,11 +103,20 @@ public:
     void print(bool active, Section* data, Section* text);
     bool active();
     bool frozen();
+    /**
+      @brief decode mvfn function body
+
+      If a multiverse function body does nothing, or only returns a
+      constant value, we can further optimize the patched callsites. For a
+      dummy architecture implementation, this operation can be implemented
+      as a NOP.
+    */
+    void decode_mvfn_body(struct mv_info_mvfn *info, uint8_t * op);
 
     uint64_t location() { return mvfn.function_body; }
     struct mv_info_mvfn mvfn;
 private:
-    vector<unique_ptr<MVassign>> assigns;
+    std::vector<std::unique_ptr<MVassign>> assigns;
 };
 
 class MVPP;
@@ -140,39 +132,28 @@ public:
     bool frozen;
     uint64_t active;
 private:
-    vector<unique_ptr<MVPP>> pps;
-    vector<unique_ptr<MVmvfn>> mvfns;
-};
-
-class MVPP {
-public:
-    MVPP(MVFn* fn);
-    MVPP(struct mv_info_callsite& cs, MVFn* fn, Section* text);
-    bool invalid();
-    void print(Section* text);
-    struct mv_patchpoint pp;
-private:
-    bool fptr;
+    std::vector<std::unique_ptr<MVPP>> pps;
+    std::vector<std::unique_ptr<MVmvfn>> mvfns;
 };
 
 class MVVar {
 public:
     MVVar(struct mv_info_var _var, Section* rodata, Section* data);
     void print(Section* rodata, Section* data, Section* text);
-    void check_fns(vector<unique_ptr<MVFn>>& fns);
+    void check_fns(std::vector<std::unique_ptr<MVFn>>& fns);
     void link_fn(MVFn* fn);
     void set_value(int v, Section* data);
     void apply(Section* text);
     uint64_t location();
 
-    string& name() { return _name; }
+    std::string& name() { return _name; }
     int64_t value() { return _value; }
 
     bool frozen;
     struct mv_info_var var;
 private:
-    set<MVFn*> fns;
-    string _name;
+    std::set<MVFn*> fns;
+    std::string _name;
     int64_t _value;
 };
 #endif

@@ -4,7 +4,11 @@
 #include <string.h>
 #include <cassert>
 
+using namespace std;
+
 #include "bintail.h"
+#include "mvvar.h"
+#include "mvpp.h"
 
 //------------------FnSection----------------------------------
 void FnSection::load(Elf* e, Elf_Scn* s) {
