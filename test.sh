@@ -1,6 +1,26 @@
-#!/bin/bash
+#!/usr/bin/zsh
+set -e
 
-for i in `ls tests/*.c | sed 's/\.c$//'`; do
-    echo "bintail $i" >&2
-    ./bintail -f $i -d
-done
+mkdir -p _tmp
+cd _tmp
+
+test_flags() {
+    echo "============================================================="
+    echo "   TEST:  $1"
+    echo "============================================================="
+    FLAGS=(${(@s/ /)1})
+    for i in $@[2,-1]
+    do
+        cp $i edit
+        ../bintail -f edit -d > before.txt
+        ../bintail -f edit $FLAGS
+        ../bintail -f edit -d > after.txt
+    done
+}
+
+samples=( `ls ../samples/*.c | sed 's/\.c$//'` )
+echo "Samples: $samples"
+
+test_flags "-a config_first -w -t" $samples
+test_flags "-s config_first=0 -w" $samples
+test_flags "-y" $samples
