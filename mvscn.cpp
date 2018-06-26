@@ -141,12 +141,20 @@ void Section::print(size_t row) {
     auto data = elf_getdata(scn, nullptr);
 
     auto p = (uint8_t *)data->d_buf;
+    auto v = vaddr();
+
+    cout << " 0x" << hex << v << ": ";
     for (auto n = 0u; n < data->d_size; n++) {
-        printf("%02x", *(p+n));
-        if (n%2 == 1)   printf(" ");
+        if (rela_vaddr_ndx.find(v+n) != rela_vaddr_ndx.end())
+            cout << ANSI_COLOR_BLUE;
+        else
+            cout << ANSI_COLOR_RESET;
+        printf("%02x ", *(p+n));
         if (n%4 == 3)   printf(" ");
-        if (n%row == row-1) printf("\n");
+        if (n%row == row-1) 
+            cout << "\n 0x" << hex << v+n << ": ";
     }
+    cout << "\n";
 }
 
 uint64_t Section::get_data_offset(uint64_t addr) {
@@ -175,9 +183,15 @@ string Section::get_string(uint64_t addr) {
     return str;
 }
 
+void Section::add_rela(Elf_Data* d, uint64_t index, uint64_t vaddr) {
+    rela_data = d;
+    rela_vaddr_ndx[vaddr] = index;
+}
+
 bool Section::inside(uint64_t addr) {
-    auto offset = addr - shdr.sh_addr;
-    return offset < shdr.sh_size;
+    bool not_above = addr < shdr.sh_addr + shdr.sh_size;
+    bool not_below = addr >= shdr.sh_addr;
+    return not_above && not_below;
 }
 
 /**

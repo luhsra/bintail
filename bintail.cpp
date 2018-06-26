@@ -18,6 +18,7 @@ using namespace std;
 
 void Bintail::load() {
     Elf_Scn * scn = nullptr;
+    Elf_Scn * reloc_scn = nullptr;
     GElf_Shdr shdr;
     char * shname;
 
@@ -44,6 +45,8 @@ void Bintail::load() {
             text.load(e, scn);
         else if (".symtab"s == shname)
             symbols.load(e, scn);
+        else if (shdr.sh_type == SHT_RELA && shdr.sh_info == 0)
+            reloc_scn = scn;
         else
             continue;
     }
@@ -53,7 +56,38 @@ void Bintail::load() {
     mvvar.parse(&rodata, &data);
     mvvar.add_fns(&mvfn, &mvdata, &mvtext);
     mvvar.add_cs(&mvcs, &text, &mvtext);
+    scatter_reloc(reloc_scn);
 }
+
+void Bintail::scatter_reloc(Elf_Scn* reloc_scn) {
+    GElf_Rela rela;
+    GElf_Shdr shdr;
+
+    Elf_Data * d = elf_getdata(reloc_scn, nullptr);
+    gelf_getshdr(reloc_scn, &shdr);
+    for (size_t i=0; i < d->d_size / shdr.sh_entsize; i++) {
+        gelf_getrela(d, i, &rela);
+
+        if (rela.r_info != R_X86_64_RELATIVE) // ToDo(Felix): understand why
+            continue;
+
+        if (mvcs.inside(rela.r_offset))
+            mvcs.add_rela(d, i, rela.r_offset);
+        else if (mvvar.inside(rela.r_offset))
+            mvvar.add_rela(d, i, rela.r_offset);
+        else if (mvfn.inside(rela.r_offset))
+            mvfn.add_rela(d, i, rela.r_offset);
+        else if (mvtext.inside(rela.r_offset))
+            mvtext.add_rela(d, i, rela.r_offset);
+        else if (mvdata.inside(rela.r_offset))
+            mvdata.add_rela(d, i, rela.r_offset);
+        else if (data.inside(rela.r_offset))
+            data.add_rela(d, i, rela.r_offset);
+        else
+            rela_unmatched.push_back(rela);
+    }
+}
+
 
 void Bintail::change(string change_str) {
     string var_name;
@@ -95,29 +129,21 @@ void Bintail::write() {
 
 void Bintail::print_reloc()
 {
-    GElf_Rela rela;
-    GElf_Shdr shdr;
+#define PRINT_RAW(S, T) \
+    cout << ANSI_COLOR_YELLOW #S ":\n" ANSI_COLOR_RESET; \
+    S.print(sizeof(T));
 
-    Elf_Scn * scn = nullptr;
-    while((scn = elf_nextscn(e, scn)) != nullptr) {
-        gelf_getshdr(scn, &shdr);
+    PRINT_RAW(mvcs, mv_info_callsite);
+    PRINT_RAW(mvfn, mv_info_fn);
+    //PRINT_RAW(mvvar, mv_info_var);
+    PRINT_RAW(mvtext, mv_info_callsite);
+    PRINT_RAW(mvdata, mv_info_callsite);
 
-        if (shdr.sh_type != SHT_RELA)
-            continue;
-
-        if (shdr.sh_info != 0) // 0 = all, could be sec_num
-            continue;
-
-        cout << "SymSec: " << elf_strptr(e, shstrndx, shdr.sh_name) 
-             << " [" << shdr.sh_link << "]\n";
-
-        Elf_Data * data = elf_getdata(scn, nullptr);
-        for (size_t i=0; i < data->d_size / shdr.sh_entsize; i++) {
-            gelf_getrela(data, i, &rela);
-            printf("\tO: %lx, I: %lx, A: %lx\n",
-                    rela.r_offset, rela.r_info, rela.r_addend);
-        }
-    }
+    cout << ANSI_COLOR_RED "\nRela unmatched:\n" ANSI_COLOR_RESET; 
+    for (auto rela : rela_unmatched)
+        cout << hex << " offset=0x" << rela.r_offset
+             << " addend=0x" << rela.r_addend
+             << endl;
 }
 
 void Bintail::print_sym() {

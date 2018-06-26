@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <memory>
+#include <map>
 #include <string>
 #include <gelf.h>
 
@@ -24,12 +25,14 @@ public:
     uint8_t* get_func_loc(uint64_t addr);
     void* get_data_loc(uint64_t addr);
     uint64_t get_value(uint64_t addr);
-    void  set_data_int(uint64_t addr, int value);
-    void  set_data_ptr(uint64_t addr, uint64_t value);
+    void set_data_int(uint64_t addr, int value);
+    void set_data_ptr(uint64_t addr, uint64_t value);
     void set_dirty();
     void add_fixed(uint64_t location) { fixed.push_back(location); }
     void print(size_t elem_sz);
     bool inside(uint64_t addr);
+
+    void add_rela(Elf_Data* d, uint64_t index, uint64_t vaddr);
 
     size_t ndx()   { return elf_ndxscn(scn); }
     size_t vaddr() { return shdr.sh_addr; }
@@ -42,6 +45,9 @@ protected:
     uint64_t get_data_offset(uint64_t addr);
     GElf_Shdr shdr;
     size_t sz;
+
+    Elf_Data * rela_data;
+    std::map<uint64_t, uint64_t> rela_vaddr_ndx;
 };
 
 class Symbols : public Section {
@@ -108,6 +114,7 @@ public:
     void trim();
     void change(std::string change_str);
     void apply(std::string apply_str);
+    void scatter_reloc(Elf_Scn* reloc_scn);
 
     Section rodata;
     Section data;
@@ -121,6 +128,7 @@ public:
     Section mvdata;
     Section mvtext;
 
+    std::vector<GElf_Rela> rela_unmatched;
 private:
     /* Elf file */
     int fd;
