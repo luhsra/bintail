@@ -8,10 +8,10 @@ ifeq (${SESSION},ubuntu)
 	LIBRARY=$(LIBRARY_DIR)/libmultiverse.a
 	EXTRA_DEPS=$(LIBRARY) $(PLUGIN)
 	
-	CFLAGS  = -fplugin=$(PLUGIN) -ggdb -I$(LIBRARY_DIR) -O2 -Wextra
+	CFLAGS  = -g -fpie -fpic -fplugin=$(PLUGIN) -I$(LIBRARY_DIR) -O2 -Wextra
 	LDFLAGS = -L$(LIBRARY_DIR)
 else
-	CFLAGS  = -ggdb -fplugin=multiverse -DMVINSTALLED -O2 -Wextra
+	CFLAGS  = -g -fplugin=multiverse -DMVINSTALLED -O2 -Wextra
 endif
 LDLIBS  = -lmultiverse
 
@@ -19,3 +19,6 @@ SOURCES=$(shell echo *.c)
 SAMPLES=$(foreach x,${SOURCES},$(patsubst %.c,%,$x))
 
 all: $(SAMPLES)
+
+clean:
+	rm -f $(SAMPLES)

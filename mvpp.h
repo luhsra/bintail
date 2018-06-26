@@ -26,9 +26,9 @@ struct mv_patchpoint {
 class MVPP {
 public:
     MVPP(MVFn* fn);
-    MVPP(struct mv_info_callsite& cs, MVFn* fn, Section* text);
+    MVPP(struct mv_info_callsite& cs, MVFn* fn, Section* text, Section* mvtext);
     bool invalid();
-    void print(Section* text);
+    void print(Section* text, Section* mvtext);
 
     /**
        @brief Decode callee site into the patchpoint

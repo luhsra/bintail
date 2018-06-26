@@ -26,6 +26,7 @@ depend: .depend
 
 clean:
 	$(RM) $(OBJS)
+	$(MAKE) -C samples clean
 
 %.o : %.cc
 %.o : %.cc $(DEPDIR)/%.d $(EXTRA_DEPS)

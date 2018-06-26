@@ -70,11 +70,9 @@ void MVmvfn::decode_mvfn_body(struct mv_info_mvfn *info, uint8_t * op) {
 }
 
 
-MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, Section* mvdata, Section* text) {
+MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, Section* mvdata, Section* mvtext) {
     mvfn = _mvfn;
-
-    decode_mvfn_body(&mvfn,
-            text->get_func_loc(mvfn.function_body));
+    decode_mvfn_body(&mvfn, mvtext->get_func_loc(mvfn.function_body));
 
     auto assign_array = static_cast<struct mv_info_assignment*>
         (mvdata->get_data_loc(mvfn.assignments));
@@ -98,7 +96,7 @@ bool MVmvfn::frozen() {
     return true;
 }
 
-void MVmvfn::print(bool cur, Section* data, Section* text) {
+void MVmvfn::print(bool cur, Section* mvdata, Section* mvtext) {
     if (active())
         cout << ANSI_COLOR_YELLOW;
 
@@ -107,7 +105,7 @@ void MVmvfn::print(bool cur, Section* data, Section* text) {
     else
         cout << "    ";
 
-    cout << "mvfn@.text:0x" << hex << mvfn.function_body - text->vaddr();
+    cout << "mvfn@.mvtext:0x" << hex << mvfn.function_body - mvtext->vaddr();
 
     auto type = mvfn.type == MVFN_TYPE_NONE ? "none" :
            mvfn.type == MVFN_TYPE_NOP ? "nop" :
@@ -116,8 +114,8 @@ void MVmvfn::print(bool cur, Section* data, Section* text) {
            mvfn.type == MVFN_TYPE_STI ? "sti" : "unknown";
     cout << " type=" << type;
 
-    cout << "  -  assignments[] @.data:0x" << hex
-        << mvfn.assignments - data->vaddr() << "\n" ANSI_COLOR_RESET;
+    cout << "  -  assignments[] @.mvdata:0x" << hex
+        << mvfn.assignments - mvdata->vaddr() << "\n" ANSI_COLOR_RESET;
     for (auto& assign : assigns)
         assign->print();
 }
@@ -143,8 +141,8 @@ void MVFn::apply(Section* text, Section* mvtext) {
     }
 }
 
-void MVFn::add_cs(struct mv_info_callsite& cs, Section* text) {
-    auto pp = make_unique<MVPP>(cs, this, text);
+void MVFn::add_cs(struct mv_info_callsite& cs, Section* text, Section* mvtext) {
+    auto pp = make_unique<MVPP>(cs, this, text, mvtext);
     pps.push_back(move(pp));
 }
 
@@ -177,58 +175,28 @@ void MVFn::check_var(MVVar* var) {
         mvfn->check_var(var, this);
 }
 
-void MVFn::print(Section* rodata, Section* data, Section* text) {
+void MVFn::print(Section* rodata, Section* mvdata, Section* text, Section* mvtext) {
     if (active == fn.function_body)
         cout << " -> ";
     else 
         cout << "    ";
     
     cout << rodata->get_string(fn.name) 
-        << " @.text:0x" << hex
-        << fn.function_body - text->vaddr()
-        << "  -  mvfn[] @.data:0x"
-        << fn.mv_functions - data->vaddr() << "\n";
+        << " @.mvtext:0x" << hex
+        << fn.function_body - mvtext->vaddr()
+        << "  -  mvfn[] @.mvdata:0x"
+        << fn.mv_functions - mvdata->vaddr() << "\n";
 
     for (auto &mvfn : mvfns) {
         auto mact = active == mvfn->location();
 
-        mvfn->print(mact, data, text);
+        mvfn->print(mact, mvdata, mvtext);
     }
     
     cout << "\tpatchpoints:\n";
     for (auto& pp : pps)
-        pp->print(text);
+        pp->print(text, mvtext);
     printf("\n");
-}
-
-//---------------------MVPP----------------------------------------------------
-MVPP::MVPP(struct mv_info_callsite& cs, MVFn* fn, Section* text) {
-    decode_callsite(fn, cs, text);
-    assert(!invalid());
-}
-
-MVPP::MVPP(MVFn* fn) {
-    fptr = (fn->fn.n_mv_functions == 0);
-    decode_function(fn);
-    assert(!invalid());
-}
-
-void MVPP::print(Section* text) {
-    auto type = pp.type == PP_TYPE_INVALID ? "invalid" :
-        pp.type == PP_TYPE_X86_CALL ? "call(x86)" :
-        pp.type == PP_TYPE_X86_CALL_INDIRECT ? "indirect call(x86)" :
-        pp.type == PP_TYPE_X86_JUMP ? "jump(x86)" : "nope";
-
-    cout << "\t\t@.text:0x" << hex << pp.location - text->vaddr() << " Type:" << type;
-
-    if (fptr)
-        cout << " <- fptr\n";
-    else
-        cout <<  "\n";
-}
-
-bool MVPP::invalid() { 
-    return pp.type == PP_TYPE_INVALID;
 }
 
 //---------------------MVVar---------------------------------------------------
@@ -242,11 +210,11 @@ MVVar::MVVar(struct mv_info_var _var, Section* rodata, Section* data)
     _value -= (_value >> b) << b;
 }
 
-void MVVar::print(Section* rodata, Section* data, Section* text) {
+void MVVar::print(Section* rodata, Section* data, Section* text, Section* mvtext) {
     cout << "Var: " << rodata->get_string(var.name)
         << "@.data:0x" << location() - data->vaddr() << "\n";
     for (auto& fn : fns)
-        fn->print(rodata, data, text);
+        fn->print(rodata, data, text, mvtext);
 }
 
 void MVVar::link_fn(MVFn* fn) {

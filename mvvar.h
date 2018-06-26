@@ -100,7 +100,7 @@ class MVmvfn {
 public:
     MVmvfn(struct mv_info_mvfn& _mvfn, Section* data, Section* text);
     void check_var(MVVar* var, MVFn* fn);
-    void print(bool active, Section* data, Section* text);
+    void print(bool active, Section* data, Section* mvtext);
     bool active();
     bool frozen();
     /**
@@ -123,9 +123,9 @@ class MVPP;
 class MVFn {
 public:
     MVFn(struct mv_info_fn& _fn, Section* data, Section* text);
-    void print(Section* rodata, Section* data, Section* text);
+    void print(Section* rodata, Section* data, Section* text, Section* mvtext);
     void check_var(MVVar* var);
-    void add_cs(struct mv_info_callsite& cs, Section* text);
+    void add_cs(struct mv_info_callsite& cs, Section* text, Section* mvtext);
     uint64_t location();
     void apply(Section* text, Section* mvtext);
     struct mv_info_fn fn;
@@ -139,7 +139,7 @@ private:
 class MVVar {
 public:
     MVVar(struct mv_info_var _var, Section* rodata, Section* data);
-    void print(Section* rodata, Section* data, Section* text);
+    void print(Section* rodata, Section* data, Section* text, Section* mvtext);
     void check_fns(std::vector<std::unique_ptr<MVFn>>& fns);
     void link_fn(MVFn* fn);
     void set_value(int v, Section* data);

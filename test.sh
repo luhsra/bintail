@@ -11,10 +11,12 @@ test_flags() {
     FLAGS=(${(@s/ /)1})
     for i in $@[2,-1]
     do
+        echo "-> $i"
         cp $i edit
         ../bintail -f edit -d > before.txt
-        ../bintail -f edit $FLAGS
+        ../bintail -f edit $FLAGS > out.txt
         ../bintail -f edit -d > after.txt
+        ./edit > prog.txt
     done
 }
 

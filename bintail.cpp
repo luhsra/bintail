@@ -52,7 +52,7 @@ void Bintail::load() {
 
     mvvar.parse(&rodata, &data);
     mvvar.add_fns(&mvfn, &mvdata, &mvtext);
-    mvvar.add_cs(&mvcs, &text);
+    mvvar.add_cs(&mvcs, &text, &mvtext);
 }
 
 void Bintail::change(string change_str) {
@@ -132,7 +132,7 @@ void Bintail::print_sym() {
 }
 
 void Bintail::print() {
-    mvvar.print(&rodata, &data, &text);
+    mvvar.print(&rodata, &data, &text, &mvtext);
 }
 
 Bintail::Bintail(string filename) {

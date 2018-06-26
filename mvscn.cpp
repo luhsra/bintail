@@ -304,13 +304,13 @@ void VarSection::parse_assigns() {
  * 2. Create patchpoint
  * 3. Append pp to fn ll
  */
-void VarSection::add_cs(CsSection* mvcs, Section* text) {
+void VarSection::add_cs(CsSection* mvcs, Section* text, Section* mvtext) {
     for (auto& cs : mvcs->lst) {
         for (auto& fn : fns) {
             if (fn->location() != cs.function_body )
                 continue;
 
-            fn->add_cs(cs, text);
+            fn->add_cs(cs, text, mvtext);
         }
     }
 }
@@ -359,7 +359,7 @@ void VarSection::set_var(string var_name, int v, Section* data) {
     }
 }
 
-void VarSection::print(Section* rodata, Section* data, Section* text) {
+void VarSection::print(Section* rodata, Section* data, Section* text, Section* mvtext) {
     for (auto& var : vars)
-        var->print(rodata, data, text);
+        var->print(rodata, data, text, mvtext);
 }

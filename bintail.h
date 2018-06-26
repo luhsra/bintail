@@ -73,8 +73,8 @@ class VarSection : public Section {
 public:
     void load(Elf* elf, Elf_Scn * s);
     void parse(Section* rodata, Section* data);
-    void print(Section* rodata, Section* data, Section* text);
-    void add_cs(CsSection* mvcs, Section* text);
+    void print(Section* rodata, Section* data, Section* text, Section* mvtext);
+    void add_cs(CsSection* mvcs, Section* text, Section* mvtext);
     void add_fns(FnSection* mvfn, Section* data, Section* text);
     void set_var(std::string var_name, int v, Section* data);
     void apply_var(std::string var_name, Section* text, Section* mvtext);

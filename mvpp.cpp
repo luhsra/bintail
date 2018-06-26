@@ -1,4 +1,5 @@
 #include <iostream>
+#include <cassert>
 
 using namespace std;
 
@@ -17,9 +18,51 @@ static int location_len(mv_info_patchpoint_type type) {
 static void insert_offset_argument(uint8_t* callsite, void * callee) {
     uint32_t offset = (uintptr_t)callee - ((uintptr_t) callsite + 5);
     *((uint32_t *)&callsite[1]) = offset;
+    cout << "Offset=0x" << hex << offset << endl;
 }
 
 //---------------------MVPP----------------------------------------------------
+MVPP::MVPP(struct mv_info_callsite& cs, MVFn* fn, Section* text, Section* mvtext) {
+    Section* txt;
+    if (text->inside(cs.call_label))
+        txt = text;
+    else
+        txt = mvtext;
+    decode_callsite(fn, cs, txt);
+    assert(!invalid());
+}
+
+MVPP::MVPP(MVFn* fn) {
+    fptr = (fn->fn.n_mv_functions == 0);
+    decode_function(fn);
+    assert(!invalid());
+}
+
+void MVPP::print(Section* text, Section* mvtext) {
+    Section* txt;
+    auto type = pp.type == PP_TYPE_INVALID ? "invalid" :
+        pp.type == PP_TYPE_X86_CALL ? "call(x86)" :
+        pp.type == PP_TYPE_X86_CALL_INDIRECT ? "indirect call(x86)" :
+        pp.type == PP_TYPE_X86_JUMP ? "jump(x86)" : "nope";
+
+    if (text->inside(pp.location)) {
+        txt = text;
+        cout << "\t\t@.text:0x" << hex << pp.location - txt->vaddr() << " Type:" << type;
+    } else {
+        txt = mvtext;
+        cout << "\t\t@.mvtext:0x" << hex << pp.location - txt->vaddr() << " Type:" << type;
+    }
+
+    if (fptr)
+        cout << " <- fptr\n";
+    else
+        cout <<  "\n";
+}
+
+bool MVPP::invalid() { 
+    return pp.type == PP_TYPE_INVALID;
+}
+
 void MVPP::decode_function(MVFn* fn) {
     pp.type     = PP_TYPE_X86_JUMP;
     pp.function = fn;
@@ -54,6 +97,7 @@ void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* m
 
     auto location = txt->get_func_loc(pp.location);
     auto dest = mvtext->get_func_loc(mvfn->function_body);
+    //asm("int $3");
 
     switch(pp.type) {
         case PP_TYPE_X86_JUMP:
