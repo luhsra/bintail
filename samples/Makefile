@@ -11,7 +11,7 @@ ifeq (${SESSION},ubuntu)
 	CFLAGS  = -g -fpie -fpic -fplugin=$(PLUGIN) -I$(LIBRARY_DIR) -O2 -Wextra
 	LDFLAGS = -L$(LIBRARY_DIR)
 else
-	CFLAGS  = -g -fplugin=multiverse -DMVINSTALLED -O2 -Wextra
+	CFLAGS  = -g -fplugin=multiverse -DMVINSTALLED -O0 -Wextra
 endif
 LDLIBS  = -lmultiverse
 

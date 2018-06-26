@@ -91,7 +91,6 @@ void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* m
 
     auto location = txt->get_func_loc(pp.location);
     uint32_t offset;
-    asm("int $3");
 
     switch(pp.type) {
         case PP_TYPE_X86_JUMP:

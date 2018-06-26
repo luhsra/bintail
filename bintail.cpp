@@ -93,32 +93,32 @@ void Bintail::write() {
         errx(1, "elf_update(write) failed.");
 }
 
-//void Bintail::print_reloc()
-//{
-//    GElf_Rela rela;
-//    GElf_Shdr shdr;
-//
-//    Elf_Scn * scn = nullptr;
-//    while((scn = elf_nextscn(e, scn)) != nullptr) {
-//        gelf_getshdr(scn, &shdr);
-//
-//        if (shdr.sh_type != SHT_RELA)
-//            continue;
-//
-//        printf("%s: link=%d info=%d\n", 
-//                elf_strptr(e, shstrndx, shdr.sh_name),
-//                shdr.sh_link, shdr.sh_info);
-//
-//        Elf_Data * data = nullptr;
-//        while ((data = elf_getdata(scn, data)) != nullptr) {
-//            for (size_t i=0; i < data->d_size / shdr.sh_entsize; i++) {
-//                gelf_getrela(data, i, &rela);
-//                printf("\tO: %lx, I: %lx, A: %lx\n",
-//                        rela.r_offset, rela.r_info, rela.r_addend);
-//            }
-//        }
-//    }
-//}
+void Bintail::print_reloc()
+{
+    GElf_Rela rela;
+    GElf_Shdr shdr;
+
+    Elf_Scn * scn = nullptr;
+    while((scn = elf_nextscn(e, scn)) != nullptr) {
+        gelf_getshdr(scn, &shdr);
+
+        if (shdr.sh_type != SHT_RELA)
+            continue;
+
+        if (shdr.sh_info != 0) // 0 = all, could be sec_num
+            continue;
+
+        cout << "SymSec: " << elf_strptr(e, shstrndx, shdr.sh_name) 
+             << " [" << shdr.sh_link << "]\n";
+
+        Elf_Data * data = elf_getdata(scn, nullptr);
+        for (size_t i=0; i < data->d_size / shdr.sh_entsize; i++) {
+            gelf_getrela(data, i, &rela);
+            printf("\tO: %lx, I: %lx, A: %lx\n",
+                    rela.r_offset, rela.r_info, rela.r_addend);
+        }
+    }
+}
 
 void Bintail::print_sym() {
     cout << ANSI_COLOR_YELLOW "MVVAR syms: \n" ANSI_COLOR_RESET;
