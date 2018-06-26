@@ -31,38 +31,15 @@ public:
     void print(Section* text, Section* mvtext);
 
     /**
-       @brief Decode callee site into the patchpoint
-
-       This architecture specfic function decodes the callee at addr and
-       fills in the patchpoint information. On success the patchpoint type
+       These architecture specfic functions decode the callee at addr and
+       fill in the patchpoint information. On success the patchpoint type
        is != PP_TYPE_INVALID.
     */
     void decode_function(MVFn* fn);
-
-    /**
-      @brief Decode callsite and fill patchpoint info
-
-      This architecture specfic function decodes the callsite at addr and
-      fills in the patchpoint information. On success the patchpoint type
-      is != PP_TYPE_INVALID.
-    */
     void decode_callsite(MVFn* fn, struct mv_info_callsite& cs, Section* text);
 
-    /**
-      @brief applies the mvfn to the patchpoint
-    */
     void patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* mvtext);
-
-    /**
-       @brief restores the code to the original form
-    */
     void patchpoint_revert();
-
-    /**
-     * @brief Translates a patchpoint into two pointers indicating the
-     * begin and the end of the patchpoint. In the OS layer, these points
-     * are translated to page pointers.
-     */
     void patchpoint_size(void **from, void** to);
 
     struct mv_patchpoint pp;

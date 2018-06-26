@@ -15,12 +15,6 @@ static int location_len(mv_info_patchpoint_type type) {
     }
 }
 
-static void insert_offset_argument(uint8_t* callsite, void * callee) {
-    uint32_t offset = (uintptr_t)callee - ((uintptr_t) callsite + 5);
-    *((uint32_t *)&callsite[1]) = offset;
-    cout << "Offset=0x" << hex << offset << endl;
-}
-
 //---------------------MVPP----------------------------------------------------
 MVPP::MVPP(struct mv_info_callsite& cs, MVFn* fn, Section* text, Section* mvtext) {
     Section* txt;
@@ -96,13 +90,14 @@ void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* m
         txt = mvtext;
 
     auto location = txt->get_func_loc(pp.location);
-    auto dest = mvtext->get_func_loc(mvfn->function_body);
-    //asm("int $3");
+    uint32_t offset;
+    asm("int $3");
 
     switch(pp.type) {
         case PP_TYPE_X86_JUMP:
-            location[0] = 0xe9;
-            insert_offset_argument(location, dest);
+            location[0] = 0xe9; // jmp
+            offset = (uintptr_t)mvfn->function_body - ((uintptr_t) pp.location + 5);
+            *((uint32_t *)&location[1]) = offset;
             break;
         case PP_TYPE_X86_CALL:
         case PP_TYPE_X86_CALL_INDIRECT:
@@ -131,8 +126,9 @@ void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* m
                     memcpy(&location[1], "\x0F\x1F\x40\x00", 4);     // 4 byte NOP
                 }
             } else {
-                location[0] = 0xe8;
-                insert_offset_argument(location, dest);
+                offset = (uintptr_t)mvfn->function_body - ((uintptr_t) pp.location + 5);
+                location[0] = 0xe8; // call
+                *((uint32_t *)&location[1]) = offset;
                 if (pp.type == PP_TYPE_X86_CALL_INDIRECT)
                     location[5] = '\x90'; // insert trailing NOP
             }
