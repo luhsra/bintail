@@ -38,13 +38,15 @@ public:
     size_t vaddr() { return shdr.sh_addr; }
     uint64_t off() { return shdr.sh_offset; }
     size_t size()  { return sz; }
+
+    std::vector<uint64_t> fixed;
 protected:
     Elf_Scn * scn;
     Elf * elf;
-    std::vector<uint64_t> fixed;
     uint64_t get_data_offset(uint64_t addr);
     GElf_Shdr shdr;
     size_t sz;
+    uint64_t max_size;
 
     Elf_Data * rela_data;
     std::map<uint64_t, uint64_t> rela_vaddr_ndx;
@@ -62,13 +64,13 @@ private:
 class FnSection : public Section {
 public:
     void load(Elf* elf, Elf_Scn * s);
-    void regenerate(Symbols* syms, Section* data);
+    void regenerate(Symbols* syms, Section* data, std::vector<struct mv_info_fn>* nf_list);
     std::vector<struct mv_info_fn> lst;
 };
 
 class CsSection : public Section {
 public:
-    void regenerate(Symbols* syms, Section* data);
+    void regenerate(Symbols* syms, Section* data, std::vector<struct mv_info_callsite>* nv_list);
     void load(Elf* elf, Elf_Scn * s);
     std::vector<struct mv_info_callsite> lst;
 };
@@ -78,21 +80,11 @@ class MVFn;
 class VarSection : public Section {
 public:
     void load(Elf* elf, Elf_Scn * s);
-    void parse(Section* rodata, Section* data);
-    void print(Section* rodata, Section* data, Section* text, Section* mvtext);
-    void add_cs(CsSection* mvcs, Section* text, Section* mvtext);
-    void add_fns(FnSection* mvfn, Section* data, Section* text);
-    void set_var(std::string var_name, int v, Section* data);
-    void apply_var(std::string var_name, Section* text, Section* mvtext);
-    void mark_fixed(FnSection* fn_sec, CsSection* cs_sec);
-    void regenerate(Symbols* syms, Section* data);
+    void clear();
+    void regenerate(Symbols* syms, Section* data, std::vector<struct mv_info_var>* nc_list);
 
     std::vector<struct mv_info_var> lst;
 private:
-    void parse_assigns();
-
-    std::vector<std::shared_ptr<MVVar>> vars;
-    std::vector<std::unique_ptr<MVFn>> fns;
 };
 
 class Bintail {
@@ -116,6 +108,12 @@ public:
     void apply(std::string apply_str);
     void scatter_reloc(Elf_Scn* reloc_scn);
 
+    void parse();
+    void add_cs();
+    void add_fns();
+    void mark_fixed();
+    void print_vars();
+
     Section rodata;
     Section data;
     Section text;
@@ -127,6 +125,9 @@ public:
     CsSection mvcs;
     Section mvdata;
     Section mvtext;
+
+    std::vector<std::shared_ptr<MVVar>> vars;
+    std::vector<std::unique_ptr<MVFn>> fns;
 
     std::vector<GElf_Rela> rela_unmatched;
 private:

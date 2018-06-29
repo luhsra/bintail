@@ -53,11 +53,64 @@ void Bintail::load() {
 
     assert(data.size() > 0 && text.size() > 0 && rodata.size() > 0);
 
-    mvvar.parse(&rodata, &data);
-    mvvar.add_fns(&mvfn, &mvdata, &mvtext);
-    mvvar.add_cs(&mvcs, &text, &mvtext);
+    parse();
+    add_fns();
+    add_cs();
     scatter_reloc(reloc_scn);
 }
+
+/**
+ * For all callsites:
+ * 1. Find function
+ * 2. Create patchpoint
+ * 3. Append pp to fn ll
+ */
+void Bintail::add_cs() {
+    for (auto& cs : mvcs.lst) {
+        for (auto& fn : fns) {
+            if (fn->location() != cs.function_body )
+                continue;
+
+            fn->add_cs(cs, &text, &mvtext);
+        }
+    }
+}
+
+void Bintail::add_fns() {
+    for (auto& fn : mvfn.lst) {
+        auto f = make_unique<MVFn>(fn, &mvdata, &mvtext);
+        fns.push_back(move(f));
+    }
+    /**
+     * find var & save ptr to it
+     *    add fn to var.functions_head
+     */
+    for (auto& var: vars) {
+        var->check_fns(fns);
+    }
+}
+
+void Bintail::parse() {
+    for (auto& e : mvvar.lst) {
+        auto var = make_unique<MVVar>(e, &rodata, &data);
+        vars.push_back(move(var));
+    }
+}
+
+void Bintail::mark_fixed() {
+    for (auto& f : fns) {
+        if (f->frozen) {
+            mvfn.add_fixed(f->location());
+            mvcs.add_fixed(f->location());
+        }
+    }
+    for (auto& v : vars) {
+        if (v->frozen) {
+            mvvar.add_fixed(v->location());
+        }
+    }
+}
+
 
 void Bintail::scatter_reloc(Elf_Scn* reloc_scn) {
     GElf_Rela rela;
@@ -98,8 +151,12 @@ void Bintail::change(string change_str) {
     var_name = m.str(1);
     value = stoi(m.str(2));
 
-    mvvar.set_var(var_name, value, &data);
+    for (auto& e : vars) {
+        if (var_name == e->name())
+            e->set_value(value, &data);
+    }
 }
+
 
 void Bintail::apply(string change_str) {
     string var_name;
@@ -108,14 +165,47 @@ void Bintail::apply(string change_str) {
     regex_search(change_str, m, regex(R"((\w+))"));
     var_name = m.str(1);
 
-    mvvar.apply_var(var_name, &text, &mvtext);
+    for (auto& e : vars) {
+        if (var_name == e->name())
+            e->apply(&text, &mvtext);
+    }
 }
 
 void Bintail::trim() {
-    mvvar.mark_fixed(&mvfn, &mvcs);
-    mvfn.regenerate(&symbols, &data);
-    mvcs.regenerate(&symbols, &data);
-    mvvar.regenerate(&symbols, &data);
+    mark_fixed();
+
+    // Fn
+    vector<struct mv_info_fn> nf_lst;
+    for (auto& e:mvfn.lst) {
+        // if mv_var is fixed skip metadata
+        auto i = find_if(mvfn.fixed.begin(), mvfn.fixed.end(),
+                [&e](const auto& floc){ return e.function_body == floc; });
+        if (i != mvfn.fixed.end())
+            continue;
+        nf_lst.push_back(e);
+    }
+    mvfn.regenerate(&symbols, &data, &nf_lst);
+
+    // CS
+    vector<struct mv_info_callsite> nc_lst;
+    for (auto& e:mvcs.lst) {
+        // if mv_var is fixed skip metadata
+        auto i = find_if(mvcs.fixed.begin(), mvcs.fixed.end(),
+                [&e](const auto& floc){ return e.function_body == floc; });
+        if (i != mvcs.fixed.end())
+            continue;
+        nc_lst.push_back(e);
+    }
+    mvcs.regenerate(&symbols, &data, &nc_lst);
+
+    // Var
+    vector<struct mv_info_var> nv_lst;
+    for (auto& e:vars) {
+        if (e->frozen)
+            continue;
+        nv_lst.push_back(e->var);
+    }
+    mvvar.regenerate(&symbols, &data, &nv_lst);
 }
 
 // See: libelf by example
@@ -135,7 +225,7 @@ void Bintail::print_reloc()
 
     PRINT_RAW(mvcs, mv_info_callsite);
     PRINT_RAW(mvfn, mv_info_fn);
-    //PRINT_RAW(mvvar, mv_info_var);
+    PRINT_RAW(mvvar, mv_info_var);
     PRINT_RAW(mvtext, mv_info_callsite);
     PRINT_RAW(mvdata, mv_info_callsite);
 
@@ -158,7 +248,8 @@ void Bintail::print_sym() {
 }
 
 void Bintail::print() {
-    mvvar.print(&rodata, &data, &text, &mvtext);
+    for (auto& var : vars)
+        var->print(&rodata, &data, &text, &mvtext);
 }
 
 Bintail::Bintail(string filename) {

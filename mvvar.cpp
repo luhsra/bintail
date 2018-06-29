@@ -150,7 +150,7 @@ uint64_t MVFn::location() {
     return fn.function_body;
 }
 
-MVFn::MVFn(struct mv_info_fn& _fn, Section* mvdata, Section* text)
+MVFn::MVFn(struct mv_info_fn& _fn, Section* mvdata, Section* mvtext)
     :frozen{false} {
     fn = _fn;
 
@@ -165,7 +165,7 @@ MVFn::MVFn(struct mv_info_fn& _fn, Section* mvdata, Section* text)
     auto mvfn_array = static_cast<struct mv_info_mvfn*>
         (mvdata->get_data_loc(fn.mv_functions));
     for (size_t j = 0; j < fn.n_mv_functions; j++) {
-        auto mf = make_unique<MVmvfn>(mvfn_array[j], mvdata, text);
+        auto mf = make_unique<MVmvfn>(mvfn_array[j], mvdata, mvtext);
         mvfns.push_back(move(mf));
     }
 }

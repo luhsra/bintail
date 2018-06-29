@@ -4,7 +4,7 @@ POSTCOMPILE = mv -f $(DEPDIR)/$*.Td $(DEPDIR)/$*.d
 
 CXX=clang++
 RM=rm -f
-CXXFLAGS=-Wall -Wextra -ggdb -std=c++14
+CXXFLAGS=-Wall -Wextra -g -std=c++17
 CXXFLAGS+=-MT $@ -MMD -MP -MF $(DEPDIR)/$*.Td
 LDFLAGS=-g
 LDLIBS=-lelf
