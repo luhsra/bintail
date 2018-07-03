@@ -16,20 +16,39 @@ static int location_len(mv_info_patchpoint_type type) {
 }
 
 //---------------------MVPP----------------------------------------------------
-MVPP::MVPP(struct mv_info_callsite& cs, MVFn* fn, Section* text, Section* mvtext) {
+MVPP::MVPP(struct mv_info_callsite& cs, Section* text, Section* mvtext) {
     Section* txt;
     if (text->inside(cs.call_label))
         txt = text;
     else
         txt = mvtext;
-    decode_callsite(fn, cs, txt);
+
+    function_body = cs.function_body;
+
+    decode_callsite(cs, txt);
     assert(!invalid());
 }
 
-MVPP::MVPP(MVFn* fn) {
+struct mv_info_callsite MVPP::make_info() {
+    struct mv_info_callsite cs;
+    cs.call_label = pp.location;
+    cs.function_body = function_body;
+    return cs;
+}
+
+MVPP::MVPP(MVFn* fn) : _fn{fn} {
     fptr = (fn->fn.n_mv_functions == 0);
-    decode_function(fn);
+
+    pp.type     = PP_TYPE_X86_JUMP;
+    pp.location = fn->location();
+
+    function_body = 0;
+
     assert(!invalid());
+}
+
+void MVPP::set_fn(MVFn* fn) {
+    _fn = fn;
 }
 
 void MVPP::print(Section* text, Section* mvtext) {
@@ -57,14 +76,7 @@ bool MVPP::invalid() {
     return pp.type == PP_TYPE_INVALID;
 }
 
-void MVPP::decode_function(MVFn* fn) {
-    pp.type     = PP_TYPE_X86_JUMP;
-    pp.function = fn;
-    pp.location = fn->location();
-}
-
-void MVPP::decode_callsite(MVFn* fn, struct mv_info_callsite& cs, 
-        Section* text) {
+uint64_t MVPP::decode_callsite(struct mv_info_callsite& cs, Section* text) {
     auto *p = text->get_func_loc(cs.call_label);
     uint64_t callee = 0;
 
@@ -77,9 +89,8 @@ void MVPP::decode_callsite(MVFn* fn, struct mv_info_callsite& cs,
     } else
         pp.type = PP_TYPE_INVALID;
 
-    pp.function = fn; // ToDo(Felix): Is this used?
     pp.location = cs.call_label;
-    fn->active = callee;
+    return callee;
 }
 
 void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* mvtext) {

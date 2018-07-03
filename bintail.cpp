@@ -27,13 +27,16 @@ void Bintail::load() {
         gelf_getshdr(scn, &shdr);
         shname = elf_strptr(e, shstrndx, shdr.sh_name);
         
-        if ("__multiverse_var_"s == shname)
+        if ("__multiverse_var_"s == shname) {
             mvvar.load(e, scn);
-        else if ("__multiverse_fn_"s == shname)
+            read_info_var(&mvvar);
+        } else if ("__multiverse_fn_"s == shname) {
             mvfn.load(e, scn);
-        else if ("__multiverse_callsite_"s == shname)
+            read_info_fn(&mvfn);
+        } else if ("__multiverse_callsite_"s == shname) {
             mvcs.load(e, scn);
-        else if ("__multiverse_data_"s == shname)
+            read_info_cs(&mvcs);
+        } else if ("__multiverse_data_"s == shname)
             mvdata.load(e, scn);
         else if ("__multiverse_text_"s == shname)
             mvtext.load(e, scn);
@@ -53,34 +56,55 @@ void Bintail::load() {
 
     assert(data.size() > 0 && text.size() > 0 && rodata.size() > 0);
 
-    parse();
     add_fns();
-    add_cs();
+    link_pp_fn();
     scatter_reloc(reloc_scn);
 }
 
-/**
- * For all callsites:
- * 1. Find function
- * 2. Create patchpoint
- * 3. Append pp to fn ll
- */
-void Bintail::add_cs() {
-    for (auto& cs : mvcs.lst) {
-        for (auto& fn : fns) {
-            if (fn->location() != cs.function_body )
-                continue;
-
-            fn->add_cs(cs, &text, &mvtext);
-        }
+void Bintail::read_info_var(Section* mvvar) {
+    for (auto i = 0; i * sizeof(struct mv_info_var) < mvvar->size(); i++) {
+        auto e = *((struct mv_info_var*)mvvar->buf() + i);
+        auto var = make_unique<MVVar>(e, &rodata, &data);
+        vars.push_back(move(var));
     }
 }
 
-void Bintail::add_fns() {
-    for (auto& fn : mvfn.lst) {
-        auto f = make_unique<MVFn>(fn, &mvdata, &mvtext);
+void Bintail::read_info_fn(Section* mvfn) {
+    for (auto i = 0; i * sizeof(struct mv_info_fn) < mvfn->size(); i++) {
+        auto e = *((struct mv_info_fn*)mvfn->buf() + i);
+        auto f = make_unique<MVFn>(e, &mvdata, &mvtext);
+        auto pp = make_unique<MVPP>(f.get());
+        f->add_pp(pp.get());
+
         fns.push_back(move(f));
+        pps.push_back(move(pp));
     }
+}
+
+void Bintail::read_info_cs(Section* mvcs) {
+    for (auto i = 0; i * sizeof(struct mv_info_callsite) < mvcs->size(); i++) {
+        auto e = *((struct mv_info_callsite*)mvcs->buf() + i);
+        auto pp = make_unique<MVPP>(e, &text, &mvtext);
+        pps.push_back(move(pp));
+    }
+}
+
+void Bintail::write_info_var(Symbols *syms, Section* data, vector<struct mv_info_var>* nlst) {
+    auto buf = reinterpret_cast<mv_info_var*>(mvvar.buf());
+    copy(nlst->begin(), nlst->end(), buf);
+
+    auto size = nlst->size()*sizeof(struct mv_info_var);
+
+    auto sym = syms->get_sym_val("__stop___multiverse_var_ptr"s);
+    uint64_t sec_end_new = data->get_value(sym) - mvvar.size() + size;
+    data->set_data_ptr(sym, sec_end_new);
+
+    mvvar.set_size(size);
+    mvvar.set_dirty();
+}
+
+
+void Bintail::add_fns() {
     /**
      * find var & save ptr to it
      *    add fn to var.functions_head
@@ -90,27 +114,54 @@ void Bintail::add_fns() {
     }
 }
 
-void Bintail::parse() {
-    for (auto& e : mvvar.lst) {
-        auto var = make_unique<MVVar>(e, &rodata, &data);
-        vars.push_back(move(var));
-    }
+void Bintail::write_info_fn(Symbols *syms, Section* data, vector<struct mv_info_fn>* nlst) {
+    auto buf = reinterpret_cast<mv_info_fn*>(mvfn.buf());
+    copy(nlst->begin(), nlst->end(), buf);
+
+    auto size = nlst->size()*sizeof(struct mv_info_fn);
+
+    auto sym = syms->get_sym_val("__stop___multiverse_fn_ptr"s);
+    uint64_t sec_end_old = data->get_value(sym);
+    uint64_t sec_end_new = sec_end_old - mvfn.size() + size;
+
+    data->set_data_ptr(sym, sec_end_new);
+    mvfn.set_size(size);
+    mvfn.set_dirty();
 }
 
-void Bintail::mark_fixed() {
-    for (auto& f : fns) {
-        if (f->frozen) {
-            mvfn.add_fixed(f->location());
-            mvcs.add_fixed(f->location());
-        }
-    }
-    for (auto& v : vars) {
-        if (v->frozen) {
-            mvvar.add_fixed(v->location());
+void Bintail::write_info_cs(Symbols *syms, Section* data, vector<struct mv_info_callsite>* nlst) {
+    auto buf = reinterpret_cast<mv_info_callsite*>(mvcs.buf());
+    copy(nlst->begin(), nlst->end(), buf);
+
+    auto size = nlst->size()*sizeof(struct mv_info_callsite);
+
+    auto sym = syms->get_sym_val("__stop___multiverse_callsite_ptr"s);
+    uint64_t sec_end_old = data->get_value(sym);
+    uint64_t sec_end_new = sec_end_old - mvcs.size() + size;
+
+    data->set_data_ptr(sym, sec_end_new);
+    mvcs.set_size(size);
+    mvcs.set_dirty();
+}
+
+
+/**
+ * For all callsites:
+ * 1. Find function
+ * 2. Create patchpoint
+ * 3. Append pp to fn ll
+ */
+void Bintail::link_pp_fn() {
+    for (auto& pp : pps) {
+        for (auto& fn : fns) {
+            if (fn->location() != pp->function_body )
+                continue;
+
+            fn->add_pp(pp.get());
+            pp->set_fn(fn.get());
         }
     }
 }
-
 
 void Bintail::scatter_reloc(Elf_Scn* reloc_scn) {
     GElf_Rela rela;
@@ -172,31 +223,23 @@ void Bintail::apply(string change_str) {
 }
 
 void Bintail::trim() {
-    mark_fixed();
-
     // Fn
     vector<struct mv_info_fn> nf_lst;
-    for (auto& e:mvfn.lst) {
-        // if mv_var is fixed skip metadata
-        auto i = find_if(mvfn.fixed.begin(), mvfn.fixed.end(),
-                [&e](const auto& floc){ return e.function_body == floc; });
-        if (i != mvfn.fixed.end())
+    for (auto& e:fns) {
+        if (e->is_fixed())
             continue;
-        nf_lst.push_back(e);
+        nf_lst.push_back(e->fn);
     }
-    mvfn.regenerate(&symbols, &data, &nf_lst);
+    write_info_fn(&symbols, &data, &nf_lst);
 
     // CS
     vector<struct mv_info_callsite> nc_lst;
-    for (auto& e:mvcs.lst) {
-        // if mv_var is fixed skip metadata
-        auto i = find_if(mvcs.fixed.begin(), mvcs.fixed.end(),
-                [&e](const auto& floc){ return e.function_body == floc; });
-        if (i != mvcs.fixed.end())
+    for (auto& e:pps) {
+        if ( e->_fn->is_fixed() || e->pp.type == PP_TYPE_X86_JUMP)
             continue;
-        nc_lst.push_back(e);
+        nc_lst.push_back(e->make_info());
     }
-    mvcs.regenerate(&symbols, &data, &nc_lst);
+    write_info_cs(&symbols, &data, &nc_lst);
 
     // Var
     vector<struct mv_info_var> nv_lst;
@@ -205,7 +248,7 @@ void Bintail::trim() {
             continue;
         nv_lst.push_back(e->var);
     }
-    mvvar.regenerate(&symbols, &data, &nv_lst);
+    write_info_var(&symbols, &data, &nv_lst);
 }
 
 // See: libelf by example

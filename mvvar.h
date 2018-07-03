@@ -8,6 +8,9 @@
 #include "bintail.h"
 
 class MVFn;
+class MVVar;
+class MVPP;
+
 //-----------------------------libmultiverse-header----------------------------
 struct mv_info_assignment {
     union {
@@ -38,6 +41,12 @@ struct mv_info_mvfn {
     uint32_t constant;
 };
 
+struct mv_info_callsite {
+    // static
+    uint64_t function_body;
+    uint64_t call_label;
+};
+
 struct mv_info_fn {
     // static
     uint64_t name;             // Functions's symbol name
@@ -53,12 +62,6 @@ struct mv_info_fn {
 struct mv_info_fn_ref {
     struct mv_info_fn_ref *next;
     struct mv_info_fn *fn;
-};
-
-struct mv_info_callsite {
-    // static
-    uint64_t function_body;
-    uint64_t call_label;
 };
 
 struct mv_info_var {
@@ -82,7 +85,6 @@ struct mv_info_var {
 };
 //--------------------------------multiverse.h---------------------------------
 
-class MVVar;
 class MVassign {
 public:
     MVassign(struct mv_info_assignment& _assign);
@@ -95,7 +97,6 @@ private:
     struct mv_info_assignment assign;
 };
 
-class MVFn;
 class MVmvfn {
 public:
     MVmvfn(struct mv_info_mvfn& _mvfn, Section* data, Section* text);
@@ -119,20 +120,21 @@ private:
     std::vector<std::unique_ptr<MVassign>> assigns;
 };
 
-class MVPP;
 class MVFn {
 public:
     MVFn(struct mv_info_fn& _fn, Section* data, Section* text);
     void print(Section* rodata, Section* data, Section* text, Section* mvtext);
     void check_var(MVVar* var);
-    void add_cs(struct mv_info_callsite& cs, Section* text, Section* mvtext);
+    void add_pp(MVPP* pp);
     uint64_t location();
     void apply(Section* text, Section* mvtext);
+    bool is_fixed();
+
     struct mv_info_fn fn;
     bool frozen;
     uint64_t active;
 private:
-    std::vector<std::unique_ptr<MVPP>> pps;
+    std::vector<MVPP*> pps;
     std::vector<std::unique_ptr<MVmvfn>> mvfns;
 };
 

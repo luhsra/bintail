@@ -1,79 +1,17 @@
 #include <iostream>
 #include <iomanip>
 #include <algorithm>
+#include <array>
 #include <exception>
 #include <string.h>
 #include <cassert>
 #include <gsl/gsl>
 
-using namespace std;
-using namespace std;
-
 #include "bintail.h"
 #include "mvvar.h"
 #include "mvpp.h"
 
-//------------------FnSection----------------------------------
-void FnSection::load(Elf* e, Elf_Scn* s) {
-    elf = e;
-    scn = s;
-    gelf_getshdr(s, &shdr);
-
-    Elf_Data * d = nullptr;
-    while ((d = elf_getdata(scn, d)) != nullptr) {
-        for (auto i = 0; i * sizeof(struct mv_info_fn) < d->d_size; i++) {
-            lst.push_back(*((struct mv_info_fn*)d->d_buf + i));
-            sz++;
-        }
-    }
-}
-
-void FnSection::regenerate(Symbols *syms, Section* data, vector<struct mv_info_fn>* nlst) {
-    auto d = elf_getdata(scn, nullptr);
-    auto buf = (struct mv_info_fn*)d->d_buf;
-    copy(nlst->begin(), nlst->end(), buf);
-    auto size = nlst->size()*sizeof(struct mv_info_fn);
-
-    auto sym = syms->get_sym_val("__stop___multiverse_fn_ptr"s);
-    uint64_t sec_end_old = data->get_value(sym);
-    uint64_t sec_end_new = sec_end_old - shdr.sh_size + size;
-
-    data->set_data_ptr(sym, sec_end_new);
-    d->d_size = size;
-    shdr.sh_size = size;
-    set_dirty();
-}
-
-//------------------CsSection----------------------------------
-void CsSection::load(Elf* e, Elf_Scn* s) {
-    elf = e;
-    scn = s;
-    gelf_getshdr(s, &shdr);
-
-    Elf_Data * d = nullptr;
-    while ((d = elf_getdata(scn, d)) != nullptr) {
-        for (auto i = 0; i * sizeof(struct mv_info_callsite) < d->d_size; i++) {
-            lst.push_back(*((struct mv_info_callsite*)d->d_buf + i));
-            sz++;
-        }
-    }
-}
-
-void CsSection::regenerate(Symbols *syms, Section* data, vector<struct mv_info_callsite>* nlst) {
-    auto d = elf_getdata(scn, nullptr);
-    auto buf = (struct mv_info_callsite*)d->d_buf;
-    copy(nlst->begin(), nlst->end(), buf);
-    auto size = nlst->size()*sizeof(struct mv_info_callsite);
-
-    auto sym = syms->get_sym_val("__stop___multiverse_callsite_ptr"s);
-    uint64_t sec_end_old = data->get_value(sym);
-    uint64_t sec_end_new = sec_end_old - shdr.sh_size + size;
-
-    data->set_data_ptr(sym, sec_end_new);
-    d->d_size = size;
-    shdr.sh_size = size;
-    set_dirty();
-}
+using namespace std;
 
 //------------------Symbols------------------------------------
 void Symbols::load(Elf* e, Elf_Scn* s) {
@@ -119,8 +57,6 @@ void Symbols::print_sym(Elf * elf, size_t shndx) {
 
 //------------------Section------------------------------------
 void Section::print(size_t row) {
-    auto data = elf_getdata(scn, nullptr);
-
     auto p = (uint8_t *)data->d_buf;
     auto v = vaddr();
 
@@ -149,18 +85,9 @@ string Section::get_string(uint64_t addr) {
     string str("");
     auto offset = get_data_offset(addr);
 
-    Elf_Data * d = nullptr;
-    while ((d = elf_getdata(scn, d)) != nullptr) {
-        if ((int)offset < d->d_off || offset >= d->d_off + d->d_size)
-            continue;
-        auto start = offset - d->d_off;
-        const char * name = (char*)d->d_buf+start;
-        size_t len = strlen(name);
-        assert(start + len < d->d_size);
-        assert(name[len] == '\0');
-        str += name;
-        break; // can clip strings
-    }
+    auto start = offset - data->d_off;
+    const char * name = (char*)data->d_buf+start;
+    str += name;
     return str;
 }
 
@@ -182,15 +109,11 @@ bool Section::inside(uint64_t addr) {
 uint8_t* Section::get_func_loc(uint64_t addr) {
     auto offset = get_data_offset(addr);
 
-    Elf_Data * d = nullptr;
-    while ((d = elf_getdata(scn, d)) != nullptr) {
-        if ((int)offset < d->d_off || offset >= d->d_off + d->d_size)
-            continue;
-        auto start = offset - d->d_off;
-        auto buf = static_cast<uint8_t*>(d->d_buf);
-        assert(start < d->d_size);
-        return static_cast<uint8_t*>(buf+start);
-    }
+    auto start = offset - data->d_off;
+    auto buf = static_cast<uint8_t*>(data->d_buf);
+    assert(start < data->d_size);
+    return static_cast<uint8_t*>(buf+start);
+
     assert(false);
     return nullptr;
 }
@@ -207,31 +130,35 @@ void Section::set_data_int(uint64_t addr, int value) {
     auto offset = get_data_offset(addr);
 
     /* single data obj on read, never add another */
-    auto d = elf_getdata(scn, nullptr);
-    assert(offset < d->d_size);
+    assert(offset < data->d_size);
 
-    auto vptr = (int*)((uint8_t*)d->d_buf + offset); 
+    auto vptr = (int*)((uint8_t*)data->d_buf + offset); 
     *vptr = value;
 
-    elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
+    elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
 }
 
 void Section::set_data_ptr(uint64_t addr, uint64_t value) {
     auto offset = get_data_offset(addr);
 
     /* single data obj on read, never add another */
-    auto d = elf_getdata(scn, nullptr);
-    assert(offset < d->d_size);
+    assert(offset < data->d_size);
 
-    auto vptr = (uint64_t*)((uint8_t*)d->d_buf + offset); 
+    auto vptr = (uint64_t*)((uint8_t*)data->d_buf + offset); 
     *vptr = value;
 
-    elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
+    elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
+}
+
+void Section::set_size(uint64_t nsz) {
+    assert(nsz <= sz);
+    data->d_size = nsz;
+    shdr.sh_size = nsz;
+    sz = nsz;
 }
 
 void Section::set_dirty() {
-    auto d = elf_getdata(scn, nullptr);
-    elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
+    elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
     gelf_update_shdr(scn, &shdr);
     elf_flagshdr(scn, ELF_C_SET, ELF_F_DIRTY);
 }
@@ -242,36 +169,6 @@ void Section::load(Elf* e, Elf_Scn* s) {
     gelf_getshdr(s, &shdr);
     sz = shdr.sh_size;
     max_size = shdr.sh_size;
-}
-
-//---------------------VarSection----------------------------------------------
-void VarSection::regenerate(Symbols *syms, Section* data, vector<struct mv_info_var>* nlst) {
-    auto d = elf_getdata(scn, nullptr);
-    auto buf = (struct mv_info_var*)d->d_buf;
-    copy(nlst->begin(), nlst->end(), buf);
-
-    auto size = nlst->size()*sizeof(struct mv_info_var);
-
-    auto sym = syms->get_sym_val("__stop___multiverse_var_ptr"s);
-    uint64_t sec_end_old = data->get_value(sym);
-    uint64_t sec_end_new = sec_end_old - shdr.sh_size + size;
-
-    data->set_data_ptr(sym, sec_end_new);
-    d->d_size = size;
-    shdr.sh_size = size;
-    set_dirty();
-}
-
-void VarSection::load(Elf* e, Elf_Scn * s) {
-    elf = e;
-    scn = s;
-    gelf_getshdr(s, &shdr);
-
-    Elf_Data * d = nullptr;
-    while ((d = elf_getdata(scn, d)) != nullptr) {
-        for (auto i = 0; i * sizeof(struct mv_info_var) < d->d_size; i++) {
-            lst.push_back(*((struct mv_info_var*)d->d_buf + i));
-            sz++;
-        }
-    }
+    data = elf_getdata(s, nullptr);
+    assert(data->d_size == sz);
 }

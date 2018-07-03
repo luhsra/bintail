@@ -141,9 +141,14 @@ void MVFn::apply(Section* text, Section* mvtext) {
     }
 }
 
-void MVFn::add_cs(struct mv_info_callsite& cs, Section* text, Section* mvtext) {
-    auto pp = make_unique<MVPP>(cs, this, text, mvtext);
-    pps.push_back(move(pp));
+bool MVFn::is_fixed() {
+    return frozen;
+}
+
+void MVFn::add_pp(MVPP* pp) {
+    if (pp->invalid())
+        assert(false);
+    pps.push_back(pp);
 }
 
 uint64_t MVFn::location() {
@@ -153,11 +158,6 @@ uint64_t MVFn::location() {
 MVFn::MVFn(struct mv_info_fn& _fn, Section* mvdata, Section* mvtext)
     :frozen{false} {
     fn = _fn;
-
-    auto pp = make_unique<MVPP>(this);
-    if (pp->invalid())
-        assert(false);
-    pps.push_back(move(pp));
 
     if (fn.n_mv_functions == 0)
         return;
