@@ -18,7 +18,6 @@ using namespace std;
 
 void Bintail::load() {
     Elf_Scn * scn = nullptr;
-    Elf_Scn * reloc_scn = nullptr;
     GElf_Shdr shdr;
     char * shname;
 
@@ -26,6 +25,13 @@ void Bintail::load() {
     while((scn = elf_nextscn(e, scn)) != nullptr) {
         gelf_getshdr(scn, &shdr);
         shname = elf_strptr(e, shstrndx, shdr.sh_name);
+
+        struct sec s;
+        s.addr = shdr.sh_addr;
+        s.size = shdr.sh_size;
+        s.off = shdr.sh_offset;
+        s.name = string(shname);
+        secs.push_back(s);
         
         if ("__multiverse_var_"s == shname) {
             mvvar.load(e, scn);
@@ -89,20 +95,32 @@ void Bintail::read_info_cs(Section* mvcs) {
     }
 }
 
-void Bintail::write_info_var(Symbols *syms, Section* data, vector<struct mv_info_var>* nlst) {
-    auto buf = reinterpret_cast<mv_info_var*>(mvvar.buf());
-    copy(nlst->begin(), nlst->end(), buf);
+void Bintail::update_relocs() {
+    vector<GElf_Rela>* rvv[] = { 
+        &mvcs.relocs, 
+        &mvvar.relocs,
+        &mvfn.relocs,
+        &mvtext.relocs,
+        &mvdata.relocs,
+        &data.relocs,
+        &rela_unmatched,
+        &rela_other
+    };
 
-    auto size = nlst->size()*sizeof(struct mv_info_var);
+    GElf_Shdr shdr;
+    gelf_getshdr(reloc_scn, &shdr);
+    auto d = elf_getdata(reloc_scn, nullptr);
 
-    auto sym = syms->get_sym_val("__stop___multiverse_var_ptr"s);
-    uint64_t sec_end_new = data->get_value(sym) - mvvar.size() + size;
-    data->set_data_ptr(sym, sec_end_new);
-
-    mvvar.set_size(size);
-    mvvar.set_dirty();
+    int i = 0;
+    for (auto v : rvv) 
+        for (auto r : *v) {
+            cout << hex << r.r_offset << " " << r.r_addend << "\n";
+            gelf_update_rela (d, i++, &r);
+        }
+    cout << shdr.sh_size << " - before\n";
+    shdr.sh_size = i * sizeof(GElf_Rela);
+    cout << shdr.sh_size << " - after\n";
 }
-
 
 void Bintail::add_fns() {
     /**
@@ -113,37 +131,6 @@ void Bintail::add_fns() {
         var->check_fns(fns);
     }
 }
-
-void Bintail::write_info_fn(Symbols *syms, Section* data, vector<struct mv_info_fn>* nlst) {
-    auto buf = reinterpret_cast<mv_info_fn*>(mvfn.buf());
-    copy(nlst->begin(), nlst->end(), buf);
-
-    auto size = nlst->size()*sizeof(struct mv_info_fn);
-
-    auto sym = syms->get_sym_val("__stop___multiverse_fn_ptr"s);
-    uint64_t sec_end_old = data->get_value(sym);
-    uint64_t sec_end_new = sec_end_old - mvfn.size() + size;
-
-    data->set_data_ptr(sym, sec_end_new);
-    mvfn.set_size(size);
-    mvfn.set_dirty();
-}
-
-void Bintail::write_info_cs(Symbols *syms, Section* data, vector<struct mv_info_callsite>* nlst) {
-    auto buf = reinterpret_cast<mv_info_callsite*>(mvcs.buf());
-    copy(nlst->begin(), nlst->end(), buf);
-
-    auto size = nlst->size()*sizeof(struct mv_info_callsite);
-
-    auto sym = syms->get_sym_val("__stop___multiverse_callsite_ptr"s);
-    uint64_t sec_end_old = data->get_value(sym);
-    uint64_t sec_end_new = sec_end_old - mvcs.size() + size;
-
-    data->set_data_ptr(sym, sec_end_new);
-    mvcs.set_size(size);
-    mvcs.set_dirty();
-}
-
 
 /**
  * For all callsites:
@@ -172,22 +159,21 @@ void Bintail::scatter_reloc(Elf_Scn* reloc_scn) {
     for (size_t i=0; i < d->d_size / shdr.sh_entsize; i++) {
         gelf_getrela(d, i, &rela);
 
-        if (rela.r_info != R_X86_64_RELATIVE) // ToDo(Felix): understand why
-            continue;
-
-        if (mvcs.inside(rela.r_offset))
-            mvcs.add_rela(d, i, rela.r_offset);
+        if (rela.r_info != R_X86_64_RELATIVE) // no ptr
+            rela_other.push_back(rela);
+        else if (mvcs.inside(rela.r_offset))
+            mvcs.add_rela(rela);
         else if (mvvar.inside(rela.r_offset))
-            mvvar.add_rela(d, i, rela.r_offset);
+            mvvar.add_rela(rela);
         else if (mvfn.inside(rela.r_offset))
-            mvfn.add_rela(d, i, rela.r_offset);
+            mvfn.add_rela(rela);
         else if (mvtext.inside(rela.r_offset))
-            mvtext.add_rela(d, i, rela.r_offset);
+            mvtext.add_rela(rela);
         else if (mvdata.inside(rela.r_offset))
-            mvdata.add_rela(d, i, rela.r_offset);
+            mvdata.add_rela(rela);
         else if (data.inside(rela.r_offset))
-            data.add_rela(d, i, rela.r_offset);
-        else
+            data.add_rela(rela);
+        else // ptr in unknown section
             rela_unmatched.push_back(rela);
     }
 }
@@ -222,33 +208,85 @@ void Bintail::apply(string change_str) {
     }
 }
 
-void Bintail::trim() {
-    // Fn
+void Bintail::trim_var() {
+    vector<struct mv_info_var> nv_lst;
+    for (auto& e:vars) {
+        if (e->frozen)
+            continue;
+        nv_lst.push_back(e->make_info());
+    }
+    auto buf = reinterpret_cast<mv_info_var*>(mvvar.buf());
+    copy(nv_lst.begin(), nv_lst.end(), buf);
+
+    auto size = nv_lst.size()*sizeof(struct mv_info_var);
+
+    auto sym = symbols.get_sym_val("__stop___multiverse_var_ptr"s);
+    uint64_t sec_end_new = data.get_value(sym) - mvvar.size() + size;
+    data.set_data_ptr(sym, sec_end_new);
+
+    mvvar.set_size(size);
+    mvvar.set_dirty();
+}
+
+void Bintail::trim_fn() {
     vector<struct mv_info_fn> nf_lst;
     for (auto& e:fns) {
         if (e->is_fixed())
             continue;
-        nf_lst.push_back(e->fn);
+        nf_lst.push_back(e->make_info());
     }
-    write_info_fn(&symbols, &data, &nf_lst);
 
-    // CS
+    auto buf = reinterpret_cast<mv_info_fn*>(mvfn.buf());
+    copy(nf_lst.begin(), nf_lst.end(), buf);
+
+    auto size = nf_lst.size()*sizeof(struct mv_info_fn);
+
+    auto sym = symbols.get_sym_val("__stop___multiverse_fn_ptr"s);
+    uint64_t sec_end_old = data.get_value(sym);
+    uint64_t sec_end_new = sec_end_old - mvfn.size() + size;
+
+    data.set_data_ptr(sym, sec_end_new);
+    mvfn.set_size(size);
+    mvfn.set_dirty();
+}
+
+void Bintail::trim_cs() {
     vector<struct mv_info_callsite> nc_lst;
     for (auto& e:pps) {
         if ( e->_fn->is_fixed() || e->pp.type == PP_TYPE_X86_JUMP)
             continue;
         nc_lst.push_back(e->make_info());
     }
-    write_info_cs(&symbols, &data, &nc_lst);
+    auto buf = reinterpret_cast<mv_info_callsite*>(mvcs.buf());
+    copy(nc_lst.begin(), nc_lst.end(), buf);
 
-    // Var
-    vector<struct mv_info_var> nv_lst;
-    for (auto& e:vars) {
-        if (e->frozen)
-            continue;
-        nv_lst.push_back(e->var);
-    }
-    write_info_var(&symbols, &data, &nv_lst);
+    auto size = nc_lst.size()*sizeof(struct mv_info_callsite);
+
+    auto sym = symbols.get_sym_val("__stop___multiverse_callsite_ptr"s);
+    uint64_t sec_end_old = data.get_value(sym);
+    uint64_t sec_end_new = sec_end_old - mvcs.size() + size;
+
+    data.set_data_ptr(sym, sec_end_new);
+    mvcs.set_size(size);
+    mvcs.set_dirty();
+}
+
+void Bintail::trim_mvdata() {
+    cout << "TODO(felix): trim_mvdata\n";
+}
+
+void Bintail::trim_mvtext() {
+    cout << "TODO(felix): trim_mvtext\n";
+}
+
+void Bintail::trim() {
+    trim_var();
+    trim_fn();
+    trim_cs();
+    trim_mvdata();
+    trim_mvtext();
+
+    update_relocs();
 }
 
 // See: libelf by example
@@ -273,10 +311,14 @@ void Bintail::print_reloc()
     PRINT_RAW(mvdata, mv_info_callsite);
 
     cout << ANSI_COLOR_RED "\nRela unmatched:\n" ANSI_COLOR_RESET; 
-    for (auto rela : rela_unmatched)
+    for (auto rela : rela_unmatched) {
         cout << hex << " offset=0x" << rela.r_offset
-             << " addend=0x" << rela.r_addend
-             << endl;
+             << " addend=0x" << rela.r_addend;
+        for (auto s : secs)
+            if (rela.r_offset < s.addr + s.size && rela.r_offset >= s.addr)
+                cout << " - " << s.name;
+        cout << endl;
+    }
 }
 
 void Bintail::print_sym() {
@@ -310,7 +352,7 @@ Bintail::Bintail(string filename) {
 
     /*-------------------------------------------------------------------------
      * Manual ELF file layout, remove for smaller file.
-     * ToDo(felix): Adjust .dynamic section after auto re-layout
+     * ToDo(felix): Adjust phdr section after auto re-layout
      *-----------------------------------------------------------------------*/
     elf_flagelf(e, ELF_C_SET, ELF_F_LAYOUT);
 

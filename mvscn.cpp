@@ -62,7 +62,7 @@ void Section::print(size_t row) {
 
     cout << " 0x" << hex << v << ": ";
     for (auto n = 0u; n < data->d_size; n++) {
-        if (rela_vaddr_ndx.find(v+n) != rela_vaddr_ndx.end())
+        if (get_rela(v+n))
             cout << ANSI_COLOR_BLUE;
         else
             cout << ANSI_COLOR_RESET;
@@ -72,6 +72,16 @@ void Section::print(size_t row) {
             cout << "\n 0x" << hex << v+n << ": ";
     }
     cout << "\n";
+}
+
+GElf_Rela* Section::get_rela(uint64_t vaddr) {
+    auto r = find_if(relocs.begin(), relocs.end(),
+                [vaddr](const GElf_Rela& r) { return r.r_offset == vaddr; }); 
+    if (r == relocs.end())
+        return nullptr;
+    else
+        return r.base();
+
 }
 
 uint64_t Section::get_data_offset(uint64_t addr) {
@@ -91,9 +101,8 @@ string Section::get_string(uint64_t addr) {
     return str;
 }
 
-void Section::add_rela(Elf_Data* d, uint64_t index, uint64_t vaddr) {
-    rela_data = d;
-    rela_vaddr_ndx[vaddr] = index;
+void Section::add_rela(GElf_Rela rela) {
+    relocs.push_back(rela);
 }
 
 bool Section::inside(uint64_t addr) {

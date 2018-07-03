@@ -141,6 +141,17 @@ void MVFn::apply(Section* text, Section* mvtext) {
     }
 }
 
+struct mv_info_fn MVFn::make_info() {
+    struct mv_info_fn f;
+    f.name = fn.name;
+    f.function_body = fn.function_body;
+    cout << "ToDo(felix): mv_functions array\n";
+    f.n_mv_functions = fn.n_mv_functions;
+    f.mv_functions = fn.mv_functions;
+    f.patchpoints_head = nullptr;
+    return f;
+}
+
 bool MVFn::is_fixed() {
     return frozen;
 }
@@ -215,6 +226,15 @@ void MVVar::print(Section* rodata, Section* data, Section* text, Section* mvtext
         << "@.data:0x" << location() - data->vaddr() << "\n";
     for (auto& fn : fns)
         fn->print(rodata, data, text, mvtext);
+}
+
+struct mv_info_var MVVar::make_info() {
+    struct mv_info_var v;
+    v.name = var.name;
+    v.variable_location = var.variable_location;
+    v.info = var.info;
+    v.functions_head = nullptr;
+    return v;
 }
 
 void MVVar::link_fn(MVFn* fn) {

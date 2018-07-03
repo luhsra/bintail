@@ -23,7 +23,7 @@ class Section {
 public:
     Section() :sz{0} {}
 
-    virtual void load(Elf * elf, Elf_Scn * s);
+    void load(Elf * elf, Elf_Scn * s);
 
     std::string get_string(uint64_t addr);
     uint8_t* get_func_loc(uint64_t addr);
@@ -35,8 +35,9 @@ public:
     void print(size_t elem_sz);
     bool inside(uint64_t addr);
     void set_size(uint64_t nsz);
+    GElf_Rela* get_rela(uint64_t vaddr);
 
-    void add_rela(Elf_Data* d, uint64_t index, uint64_t vaddr);
+    void add_rela(GElf_Rela rela);
 
     size_t ndx()   { return elf_ndxscn(scn); }
     size_t vaddr() { return shdr.sh_addr; }
@@ -44,6 +45,7 @@ public:
     size_t size()  { return sz; }
     uint8_t* buf() { return (uint8_t*)data->d_buf; }
 
+    std::vector<GElf_Rela> relocs;
 protected:
     Elf_Scn * scn;
     Elf_Data * data;
@@ -52,9 +54,6 @@ protected:
     GElf_Shdr shdr;
     size_t sz;
     uint64_t max_size;
-
-    Elf_Data * rela_data;
-    std::map<uint64_t, uint64_t> rela_vaddr_ndx;
 };
 
 class Symbols : public Section {
@@ -64,6 +63,13 @@ public:
     size_t get_sym_val(std::string symbol);
 private:
     std::vector<std::unique_ptr<GElf_Sym>> syms;
+};
+
+struct sec {
+    uint64_t addr;
+    uint64_t size;
+    uint64_t off;
+    std::string name;
 };
 
 class Bintail {
@@ -83,6 +89,13 @@ public:
     void load();
     void write();
     void trim();
+    void trim_var();
+    void trim_fn();
+    void trim_cs();
+    void trim_mvdata();
+    void trim_mvtext();
+    void update_relocs();
+
     void change(std::string change_str);
     void apply(std::string apply_str);
     void scatter_reloc(Elf_Scn* reloc_scn);
@@ -92,11 +105,8 @@ public:
     void print_vars();
 
     void read_info_var(Section* scn);
-    void write_info_var(Symbols *syms, Section* data, std::vector<struct mv_info_var>* nlst);
     void read_info_fn(Section* scn);
-    void write_info_fn(Symbols *syms, Section* data, std::vector<struct mv_info_fn>* nlst);
     void read_info_cs(Section* scn);
-    void write_info_cs(Symbols *syms, Section* data, std::vector<struct mv_info_callsite>* nlst);
 
     Section rodata;
     Section data;
@@ -115,12 +125,15 @@ public:
     std::vector<std::unique_ptr<MVPP>> pps;
 
     std::vector<GElf_Rela> rela_unmatched;
+    std::vector<GElf_Rela> rela_other;
 private:
     /* Elf file */
     int fd;
     Elf* e;
     GElf_Ehdr ehdr;
+    Elf_Scn * reloc_scn;
 
     size_t shstrndx;
+    std::vector<struct sec> secs;
 };
 #endif
