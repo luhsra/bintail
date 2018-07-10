@@ -141,15 +141,32 @@ void MVFn::apply(Section* text, Section* mvtext) {
     }
 }
 
-struct mv_info_fn MVFn::make_info() {
-    struct mv_info_fn f;
-    f.name = fn.name;
-    f.function_body = fn.function_body;
+void MVFn::make_info(mv_info_fn* f, Section* sec, uint64_t off) {
+    GElf_Rela r_name, r_fbody, r_mvfns;
+    
+    f->name = fn.name;
+    r_name.r_addend = f->name;
+    r_name.r_info = R_X86_64_RELATIVE;
+    r_name.r_offset = off;
+    sec->relocs.push_back(r_name);
+
+    f->function_body = fn.function_body;
+    r_fbody.r_addend = f->function_body;
+    r_fbody.r_info = R_X86_64_RELATIVE;
+    r_fbody.r_offset = off+sizeof(uint64_t);
+    sec->relocs.push_back(r_fbody);
+
+    /* mvdata has to be trimmed */
     cout << "ToDo(felix): mv_functions array\n";
-    f.n_mv_functions = fn.n_mv_functions;
-    f.mv_functions = fn.mv_functions;
-    f.patchpoints_head = nullptr;
-    return f;
+    f->n_mv_functions = fn.n_mv_functions;
+
+    f->mv_functions = fn.mv_functions;
+    r_mvfns.r_addend = f->mv_functions;
+    r_mvfns.r_info = R_X86_64_RELATIVE;
+    r_mvfns.r_offset = off+3*sizeof(uint64_t);
+    sec->relocs.push_back(r_mvfns);
+
+    f->patchpoints_head = nullptr;
 }
 
 bool MVFn::is_fixed() {
@@ -228,13 +245,23 @@ void MVVar::print(Section* rodata, Section* data, Section* text, Section* mvtext
         fn->print(rodata, data, text, mvtext);
 }
 
-struct mv_info_var MVVar::make_info() {
-    struct mv_info_var v;
-    v.name = var.name;
-    v.variable_location = var.variable_location;
-    v.info = var.info;
-    v.functions_head = nullptr;
-    return v;
+void MVVar::make_info(mv_info_var* v, Section* sec, uint64_t off) {
+    GElf_Rela r_name, r_vloc;
+    
+    v->name = var.name;
+    r_name.r_addend = v->name;
+    r_name.r_info = R_X86_64_RELATIVE;
+    r_name.r_offset = off;
+    sec->relocs.push_back(r_name);
+
+    v->variable_location = var.variable_location;
+    r_vloc.r_addend = v->variable_location;
+    r_vloc.r_info = R_X86_64_RELATIVE;
+    r_vloc.r_offset = off+sizeof(uint64_t);
+    sec->relocs.push_back(r_vloc);
+
+    v->info = var.info;
+    v->functions_head = nullptr;
 }
 
 void MVVar::link_fn(MVFn* fn) {

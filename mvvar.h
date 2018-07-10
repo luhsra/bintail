@@ -129,7 +129,7 @@ public:
     uint64_t location();
     void apply(Section* text, Section* mvtext);
     bool is_fixed();
-    struct mv_info_fn make_info();
+    void make_info(mv_info_fn* f, Section* sec, uint64_t off);
 
     struct mv_info_fn fn;
     bool frozen;
@@ -151,7 +151,7 @@ public:
 
     std::string& name() { return _name; }
     int64_t value() { return _value; }
-    struct mv_info_var make_info();
+    void make_info(mv_info_var* v, Section* sec, uint64_t off);
 
     bool frozen;
     struct mv_info_var var;

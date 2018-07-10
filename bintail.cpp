@@ -228,16 +228,19 @@ void Bintail::apply(string change_str) {
 }
 
 void Bintail::trim_var() {
-    vector<struct mv_info_var> nv_lst;
+    mvvar.relocs.clear();
+    auto buf = reinterpret_cast<mv_info_var*>(mvvar.buf());
+    int cnt = 0;
+    uint64_t off = mvvar.vaddr();
+
     for (auto& e:vars) {
         if (e->frozen)
             continue;
-        nv_lst.push_back(e->make_info());
+        e->make_info(buf, &mvvar, off);
+        off += sizeof(mv_info_fn);
+        buf++; cnt++;
     }
-    auto buf = reinterpret_cast<mv_info_var*>(mvvar.buf());
-    copy(nv_lst.begin(), nv_lst.end(), buf);
-
-    auto size = nv_lst.size()*sizeof(struct mv_info_var);
+    auto size = cnt*sizeof(struct mv_info_var);
 
     auto sym = symbols.get_sym_val("__stop___multiverse_var_ptr"s);
     uint64_t sec_end_new = data.get_value(sym) - mvvar.size() + size;
@@ -248,30 +251,32 @@ void Bintail::trim_var() {
 }
 
 void Bintail::trim_fn() {
-    vector<struct mv_info_fn> nf_lst;
+    mvfn.relocs.clear();
+    auto buf = reinterpret_cast<mv_info_fn*>(mvfn.buf());
+    int cnt = 0;
+    uint64_t off = mvfn.vaddr();
+
     for (auto& e:fns) {
         if (e->is_fixed())
             continue;
-        nf_lst.push_back(e->make_info());
+        e->make_info(buf, &mvfn, off);
+        off += sizeof(mv_info_fn);
+        buf++; cnt++;
     }
 
-    auto buf = reinterpret_cast<mv_info_fn*>(mvfn.buf());
-    copy(nf_lst.begin(), nf_lst.end(), buf);
-
-    auto size = nf_lst.size()*sizeof(struct mv_info_fn);
+    auto size = cnt*sizeof(struct mv_info_fn);
 
     auto sym = symbols.get_sym_val("__stop___multiverse_fn_ptr"s);
     uint64_t sec_end_old = data.get_value(sym);
     uint64_t sec_end_new = sec_end_old - mvfn.size() + size;
-
     data.set_data_ptr(sym, sec_end_new);
+
     mvfn.set_size(size);
     mvfn.set_dirty();
 }
 
 void Bintail::trim_cs() {
     mvcs.relocs.clear();
-
     auto buf = reinterpret_cast<mv_info_callsite*>(mvcs.buf());
     int cnt = 0;
     uint64_t off = mvcs.vaddr();
@@ -283,19 +288,13 @@ void Bintail::trim_cs() {
         off += sizeof(mv_info_callsite);
         buf++; cnt++;
     }
-
-    for (auto r : mvcs.relocs)
-        cout << hex << "O:" << r.r_offset 
-             << " I:" << r.r_info
-             << " A:" << r.r_addend << "\n";
-
     auto size = cnt*sizeof(struct mv_info_callsite);
 
     auto sym = symbols.get_sym_val("__stop___multiverse_callsite_ptr"s);
     uint64_t sec_end_old = data.get_value(sym);
     uint64_t sec_end_new = sec_end_old - mvcs.size() + size;
-
     data.set_data_ptr(sym, sec_end_new);
+
     mvcs.set_size(size);
     mvcs.set_dirty();
 }

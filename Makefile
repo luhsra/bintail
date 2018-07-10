@@ -28,6 +28,9 @@ clean:
 	$(RM) $(OBJS)
 	$(MAKE) -C samples clean
 
+test:
+	./test.sh || echo "FAILED"
+
 %.o : %.cc
 %.o : %.cc $(DEPDIR)/%.d $(EXTRA_DEPS)
 	$(CXX) -o $@ -c $< $(CXXFLAGS)
