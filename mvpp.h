@@ -30,7 +30,7 @@ public:
     bool invalid();
     void print(Section* text, Section* mvtext);
     void set_fn(MVFn* fn);
-    struct mv_info_callsite make_info();
+    void make_info(mv_info_callsite* cs, Section* sec, uint64_t off);
 
     /* ret callee */
     uint64_t decode_callsite(struct mv_info_callsite& cs, Section* text);

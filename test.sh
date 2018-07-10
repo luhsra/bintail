@@ -13,9 +13,9 @@ test_flags() {
     do
         echo "-> $i"
         cp $i edit
-        ../bintail -f edit -d > before.txt
+        ../bintail -f edit -dylr > before.txt
         ../bintail -f edit $FLAGS > out.txt
-        ../bintail -f edit -d > after.txt
+        ../bintail -f edit -dylr > after.txt
         ./edit > prog.txt
     done
 }
@@ -24,5 +24,4 @@ samples=( `ls ../samples/*.c | sed 's/\.c$//'` )
 echo "Samples: $samples"
 
 test_flags "-a config_first -w -t" $samples
-test_flags "-s config_first=0 -w" $samples
-test_flags "-y" $samples
+test_flags "-s config_first=0 -w -t" $samples

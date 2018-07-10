@@ -56,6 +56,16 @@ protected:
     uint64_t max_size;
 };
 
+class Dynamic : public Section {
+public:
+    void load(Elf* elf, Elf_Scn * s);
+    void write();
+    void print();
+    GElf_Dyn* get_dyn(int64_t tag);
+private:
+    std::vector<std::unique_ptr<GElf_Dyn>> dyns;
+};
+
 class Symbols : public Section {
 public:
     void load(Elf* elf, Elf_Scn * s);
@@ -79,6 +89,7 @@ public:
 
     void print_reloc();
     void print_sym();
+    void print_dyn();
 
     /* Display hex view of raw multiverse sections */
     void print_mv_sections();
@@ -112,6 +123,7 @@ public:
     Section data;
     Section text;
     Symbols symbols;
+    Dynamic dynamic;
 
     /* MV Sections */
     Section mvfn;

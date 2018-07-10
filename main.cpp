@@ -15,6 +15,7 @@ void help() {
          << "-d             Display multiverse configuration.\n"
          << "-f             File to edit.\n"
          << "-h             Print help.\n"
+         << "-l             Show dynamic info.\n"
          << "-r             Dump mvrelocs.\n"
          << "-s var=value   Set variable to value.\n"
          << "-t             Trim fixed multiverse data.\n"
@@ -28,13 +29,14 @@ int main(int argc, char *argv[]) {
     auto display = false;
     auto write = false;
     auto trim = false;
+    auto dyn = false;
     auto sym = false;
     auto mvreloc = false;
     vector<string> changes;
     vector<string> apply;
     
     int opt;
-    while ((opt = getopt(argc, argv, "a:df:hrs:twy")) != -1) {
+    while ((opt = getopt(argc, argv, "a:df:hlrs:twy")) != -1) {
         switch (opt) {
         case 'a':
             apply.push_back(optarg);
@@ -47,6 +49,9 @@ int main(int argc, char *argv[]) {
             break;
         case 'h':
             help();
+            break;
+        case 'l':
+            dyn = true;
             break;
         case 'r':
             mvreloc = true;
@@ -83,6 +88,8 @@ int main(int argc, char *argv[]) {
         bintail.print();
     if (sym)
         bintail.print_sym();
+    if (dyn)
+        bintail.print_dyn();
     if (mvreloc)
         bintail.print_reloc();
     if (trim)

@@ -29,11 +29,20 @@ MVPP::MVPP(struct mv_info_callsite& cs, Section* text, Section* mvtext) {
     assert(!invalid());
 }
 
-struct mv_info_callsite MVPP::make_info() {
-    struct mv_info_callsite cs;
-    cs.call_label = pp.location;
-    cs.function_body = function_body;
-    return cs;
+void MVPP::make_info(mv_info_callsite* cs, Section* sec, uint64_t off) {
+    GElf_Rela r1, r2;
+    
+    cs->function_body = function_body;
+    r1.r_addend = cs->function_body;
+    r1.r_info = R_X86_64_RELATIVE;
+    r1.r_offset = off;
+    sec->relocs.push_back(r1);
+
+    cs->call_label = pp.location;
+    r2.r_addend = cs->call_label;
+    r2.r_info = R_X86_64_RELATIVE;
+    r2.r_offset = off+sizeof(uint64_t);
+    sec->relocs.push_back(r2);
 }
 
 MVPP::MVPP(MVFn* fn) : _fn{fn} {

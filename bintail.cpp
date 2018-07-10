@@ -33,16 +33,13 @@ void Bintail::load() {
         s.name = string(shname);
         secs.push_back(s);
         
-        if ("__multiverse_var_"s == shname) {
+        if ("__multiverse_var_"s == shname)
             mvvar.load(e, scn);
-            read_info_var(&mvvar);
-        } else if ("__multiverse_fn_"s == shname) {
+        else if ("__multiverse_fn_"s == shname)
             mvfn.load(e, scn);
-            read_info_fn(&mvfn);
-        } else if ("__multiverse_callsite_"s == shname) {
+        else if ("__multiverse_callsite_"s == shname)
             mvcs.load(e, scn);
-            read_info_cs(&mvcs);
-        } else if ("__multiverse_data_"s == shname)
+        else if ("__multiverse_data_"s == shname)
             mvdata.load(e, scn);
         else if ("__multiverse_text_"s == shname)
             mvtext.load(e, scn);
@@ -54,6 +51,8 @@ void Bintail::load() {
             text.load(e, scn);
         else if (".symtab"s == shname)
             symbols.load(e, scn);
+        else if (".dynamic"s == shname)
+            dynamic.load(e, scn);
         else if (shdr.sh_type == SHT_RELA && shdr.sh_info == 0)
             reloc_scn = scn;
         else
@@ -62,6 +61,9 @@ void Bintail::load() {
 
     assert(data.size() > 0 && text.size() > 0 && rodata.size() > 0);
 
+    read_info_var(&mvvar);
+    read_info_fn(&mvfn);
+    read_info_cs(&mvcs);
     add_fns();
     link_pp_fn();
     scatter_reloc(reloc_scn);
@@ -97,13 +99,13 @@ void Bintail::read_info_cs(Section* mvcs) {
 
 void Bintail::update_relocs() {
     vector<GElf_Rela>* rvv[] = { 
-        &mvcs.relocs, 
-        &mvvar.relocs,
-        &mvfn.relocs,
-        &mvtext.relocs,
-        &mvdata.relocs,
-        &data.relocs,
         &rela_unmatched,
+        &data.relocs,
+        &mvvar.relocs,
+        &mvdata.relocs,
+        &mvfn.relocs,
+        &mvcs.relocs, 
+        &mvtext.relocs,
         &rela_other
     };
 
@@ -112,14 +114,31 @@ void Bintail::update_relocs() {
     auto d = elf_getdata(reloc_scn, nullptr);
 
     int i = 0;
+    int cnt = 0;
     for (auto v : rvv) 
         for (auto r : *v) {
-            cout << hex << r.r_offset << " " << r.r_addend << "\n";
-            gelf_update_rela (d, i++, &r);
+            if (r.r_info == R_X86_64_RELATIVE)
+                cnt++;
+            if (!gelf_update_rela (d, i++, &r))
+                cout << "Error: gelf_update_rela() "
+                    << elf_errmsg(elf_errno()) << endl;
         }
-    cout << shdr.sh_size << " - before\n";
+    cout << shdr.sh_size / sizeof(GElf_Rela) << " - before\n";
+
+    assert(sizeof(GElf_Rela) == shdr.sh_entsize);
     shdr.sh_size = i * sizeof(GElf_Rela);
-    cout << shdr.sh_size << " - after\n";
+    d->d_size = shdr.sh_size;
+
+    auto dyn_relacount = dynamic.get_dyn(DT_RELACOUNT);
+    auto dyn_relasz = dynamic.get_dyn(DT_RELASZ);
+    dyn_relacount->d_un.d_val = cnt;
+    dyn_relasz->d_un.d_val = shdr.sh_size;
+
+    cout << shdr.sh_size / sizeof(GElf_Rela) << " - after\n";
+
+    elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
+    gelf_update_shdr(reloc_scn, &shdr);
+    elf_flagshdr(reloc_scn, ELF_C_SET, ELF_F_DIRTY);
 }
 
 void Bintail::add_fns() {
@@ -251,16 +270,26 @@ void Bintail::trim_fn() {
 }
 
 void Bintail::trim_cs() {
-    vector<struct mv_info_callsite> nc_lst;
+    mvcs.relocs.clear();
+
+    auto buf = reinterpret_cast<mv_info_callsite*>(mvcs.buf());
+    int cnt = 0;
+    uint64_t off = mvcs.vaddr();
+
     for (auto& e:pps) {
         if ( e->_fn->is_fixed() || e->pp.type == PP_TYPE_X86_JUMP)
             continue;
-        nc_lst.push_back(e->make_info());
+        e->make_info(buf, &mvcs, off);
+        off += sizeof(mv_info_callsite);
+        buf++; cnt++;
     }
-    auto buf = reinterpret_cast<mv_info_callsite*>(mvcs.buf());
-    copy(nc_lst.begin(), nc_lst.end(), buf);
 
-    auto size = nc_lst.size()*sizeof(struct mv_info_callsite);
+    for (auto r : mvcs.relocs)
+        cout << hex << "O:" << r.r_offset 
+             << " I:" << r.r_info
+             << " A:" << r.r_addend << "\n";
+
+    auto size = cnt*sizeof(struct mv_info_callsite);
 
     auto sym = symbols.get_sym_val("__stop___multiverse_callsite_ptr"s);
     uint64_t sec_end_old = data.get_value(sym);
@@ -287,19 +316,21 @@ void Bintail::trim() {
     trim_mvtext();
 
     update_relocs();
+    dynamic.write();
 }
 
 // See: libelf by example
 void Bintail::write() {
-    if (elf_update(e, ELF_C_NULL) < 0)
+    elf_fill(0xc3c3c3c3);
+    if (elf_update(e, ELF_C_NULL) < 0) {
+        cout << elf_errmsg(elf_errno());
         errx(1, "elf_update(null) failed.");
-
+    }
     if (elf_update(e, ELF_C_WRITE) < 0)
         errx(1, "elf_update(write) failed.");
 }
 
-void Bintail::print_reloc()
-{
+void Bintail::print_reloc() {
 #define PRINT_RAW(S, T) \
     cout << ANSI_COLOR_YELLOW #S ":\n" ANSI_COLOR_RESET; \
     S.print(sizeof(T));
@@ -319,6 +350,11 @@ void Bintail::print_reloc()
                 cout << " - " << s.name;
         cout << endl;
     }
+}
+
+void Bintail::print_dyn() {
+    cout << ANSI_COLOR_YELLOW ".dynamic: \n" ANSI_COLOR_RESET;
+    dynamic.print();
 }
 
 void Bintail::print_sym() {
@@ -355,7 +391,6 @@ Bintail::Bintail(string filename) {
      * ToDo(felix): Adjust phdr section after auto re-layout
      *-----------------------------------------------------------------------*/
     elf_flagelf(e, ELF_C_SET, ELF_F_LAYOUT);
-
 }
 
 Bintail::~Bintail() {

@@ -5,6 +5,7 @@
 #include <exception>
 #include <string.h>
 #include <cassert>
+#include <memory>
 #include <gsl/gsl>
 
 #include "bintail.h"
@@ -12,6 +13,50 @@
 #include "mvpp.h"
 
 using namespace std;
+
+//------------------Symbols------------------------------------
+void Dynamic::load(Elf* e, Elf_Scn* s) {
+    Section::load(e,s);
+    auto d = elf_getdata(scn, nullptr);
+    for (auto i=0; i * shdr.sh_entsize < d->d_size; i++) {
+        auto dyn = make_unique<GElf_Dyn>();
+        gelf_getdyn(d, i, dyn.get());
+        dyns.push_back(std::move(dyn));
+    }
+}
+
+void Dynamic::print() {
+    for (auto& d : dyns) {
+        if (d->d_tag == 0x0)
+            continue;
+        cout << hex << " type=0x"<< d->d_tag
+            << " un=0x" << d->d_un.d_ptr << "\n";
+    }
+}
+
+GElf_Dyn* Dynamic::get_dyn(int64_t tag) {
+    auto it = find_if(dyns.begin(), dyns.end(), [&tag](auto& d) {
+            return d->d_tag == tag;
+            });
+    if (it != dyns.end())
+        return (*it).get();
+    else
+        return nullptr;
+}
+
+void Dynamic::write() {
+    int i = 0;
+    for (auto& dyn : dyns) 
+        if (!gelf_update_dyn (data, i++, dyn.get()))
+            cout << "Error: gelf_update_dyn() "
+                << elf_errmsg(elf_errno()) << endl;
+
+    assert(sizeof(GElf_Dyn) == shdr.sh_entsize);
+    auto nsz = i * sizeof(GElf_Dyn);
+
+    set_size(nsz);
+    set_dirty();
+}
 
 //------------------Symbols------------------------------------
 void Symbols::load(Elf* e, Elf_Scn* s) {
