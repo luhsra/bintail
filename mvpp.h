@@ -23,14 +23,15 @@ struct mv_patchpoint {
     unsigned char swapspace[6];
 };
 
-class MVPP {
+class MVPP : public MVData {
 public:
     MVPP(MVFn* fn);
     MVPP(struct mv_info_callsite& cs, Section* text, Section* mvtext);
     bool invalid();
     void print(Section* text, Section* mvtext);
     void set_fn(MVFn* fn);
-    void make_info(mv_info_callsite* cs, Section* sec, uint64_t off);
+
+    size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
 
     /* ret callee */
     uint64_t decode_callsite(struct mv_info_callsite& cs, Section* text);

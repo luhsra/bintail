@@ -4,7 +4,7 @@
 #include <set>
 #include <vector>
 #include <memory>
-
+#include <cstddef>
 #include "bintail.h"
 
 class MVFn;
@@ -85,9 +85,16 @@ struct mv_info_var {
 };
 //--------------------------------multiverse.h---------------------------------
 
-class MVassign {
+class MVData {
+public:
+    virtual size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr) = 0;
+    virtual ~MVData() {}
+};
+
+class MVassign : public MVData {
 public:
     MVassign(struct mv_info_assignment& _assign);
+    size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
     uint64_t location();
     bool active();
     void link_var(MVVar* _var);
@@ -97,9 +104,12 @@ private:
     struct mv_info_assignment assign;
 };
 
-class MVmvfn {
+class MVmvfn : public MVData {
 public:
     MVmvfn(struct mv_info_mvfn& _mvfn, Section* data, Section* text);
+    size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
+    size_t make_info_ass(std::byte* buf, Section* scn, uint64_t vaddr);
+    void set_info_assigns(uint64_t vaddr);
     void check_var(MVVar* var, MVFn* fn);
     void print(bool active, Section* data, Section* mvtext);
     bool active();
@@ -120,28 +130,32 @@ private:
     std::vector<std::unique_ptr<MVassign>> assigns;
 };
 
-class MVFn {
+class MVFn : public MVData {
 public:
     MVFn(struct mv_info_fn& _fn, Section* data, Section* text);
+    size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
     void print(Section* rodata, Section* data, Section* text, Section* mvtext);
     void check_var(MVVar* var);
     void add_pp(MVPP* pp);
     uint64_t location();
     void apply(Section* text, Section* mvtext);
     bool is_fixed();
-    void make_info(mv_info_fn* f, Section* sec, uint64_t off);
+    size_t make_mvdata(std::byte* buf, Section* mvdata, uint64_t vaddr);
+    void set_mvfn_vaddr(uint64_t vaddr);
 
     struct mv_info_fn fn;
     bool frozen;
     uint64_t active;
+    uint64_t mvfn_vaddr;
 private:
     std::vector<MVPP*> pps;
     std::vector<std::unique_ptr<MVmvfn>> mvfns;
 };
 
-class MVVar {
+class MVVar : public MVData {
 public:
     MVVar(struct mv_info_var _var, Section* rodata, Section* data);
+    size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
     void print(Section* rodata, Section* data, Section* text, Section* mvtext);
     void check_fns(std::vector<std::unique_ptr<MVFn>>& fns);
     void link_fn(MVFn* fn);
@@ -151,7 +165,6 @@ public:
 
     std::string& name() { return _name; }
     int64_t value() { return _value; }
-    void make_info(mv_info_var* v, Section* sec, uint64_t off);
 
     bool frozen;
     struct mv_info_var var;

@@ -50,7 +50,7 @@ void Bintail::load() {
         else if (".text"s == shname)
             text.load(e, scn);
         else if (".symtab"s == shname)
-            symbols.load(e, scn);
+            symtab_scn = scn;
         else if (".dynamic"s == shname)
             dynamic.load(e, scn);
         else if (shdr.sh_type == SHT_RELA && shdr.sh_info == 0)
@@ -66,7 +66,7 @@ void Bintail::load() {
     read_info_cs(&mvcs);
     add_fns();
     link_pp_fn();
-    scatter_reloc(reloc_scn);
+    scatter_reloc_sym(reloc_scn, symtab_scn);
 }
 
 void Bintail::read_info_var(Section* mvvar) {
@@ -97,7 +97,17 @@ void Bintail::read_info_cs(Section* mvcs) {
     }
 }
 
-void Bintail::update_relocs() {
+void Bintail::update_relocs_sym() {
+    vector<GElf_Sym>* svv[] = { 
+        &syms_other,
+        &data.syms,
+        &mvvar.syms,
+        &mvdata.syms,
+        &mvfn.syms,
+        &mvcs.syms, 
+        &mvtext.syms,
+    };
+
     vector<GElf_Rela>* rvv[] = { 
         &rela_unmatched,
         &data.relocs,
@@ -109,10 +119,13 @@ void Bintail::update_relocs() {
         &rela_other
     };
 
-    GElf_Shdr shdr;
+    GElf_Shdr shdr, sym_shdr;
     gelf_getshdr(reloc_scn, &shdr);
+    gelf_getshdr(symtab_scn, &sym_shdr);
     auto d = elf_getdata(reloc_scn, nullptr);
+    auto d2 = elf_getdata(symtab_scn, nullptr);
 
+    // RELOCS
     int i = 0;
     int cnt = 0;
     for (auto v : rvv) 
@@ -123,7 +136,6 @@ void Bintail::update_relocs() {
                 cout << "Error: gelf_update_rela() "
                     << elf_errmsg(elf_errno()) << endl;
         }
-    cout << shdr.sh_size / sizeof(GElf_Rela) << " - before\n";
 
     assert(sizeof(GElf_Rela) == shdr.sh_entsize);
     shdr.sh_size = i * sizeof(GElf_Rela);
@@ -134,11 +146,26 @@ void Bintail::update_relocs() {
     dyn_relacount->d_un.d_val = cnt;
     dyn_relasz->d_un.d_val = shdr.sh_size;
 
-    cout << shdr.sh_size / sizeof(GElf_Rela) << " - after\n";
+    // SYMS
+    i = 0;
+    cnt = 0;
+    for (auto v : svv) 
+        for (auto s : *v) {
+            if (!gelf_update_sym(d2, i++, &s))
+                cout << "Error: gelf_update_sym() "
+                    << elf_errmsg(elf_errno()) << endl;
+        }
+
+    assert(sizeof(GElf_Sym) == sym_shdr.sh_entsize);
+    sym_shdr.sh_size = i * sizeof(GElf_Sym);
+    d2->d_size = sym_shdr.sh_size;
 
     elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
+    elf_flagdata(d2, ELF_C_SET, ELF_F_DIRTY);
     gelf_update_shdr(reloc_scn, &shdr);
+    gelf_update_shdr(symtab_scn, &sym_shdr);
     elf_flagshdr(reloc_scn, ELF_C_SET, ELF_F_DIRTY);
+    elf_flagshdr(symtab_scn, ELF_C_SET, ELF_F_DIRTY);
 }
 
 void Bintail::add_fns() {
@@ -169,7 +196,7 @@ void Bintail::link_pp_fn() {
     }
 }
 
-void Bintail::scatter_reloc(Elf_Scn* reloc_scn) {
+void Bintail::scatter_reloc_sym(Elf_Scn* reloc_scn, Elf_Scn* symtab_scn) {
     GElf_Rela rela;
     GElf_Shdr shdr;
 
@@ -195,6 +222,29 @@ void Bintail::scatter_reloc(Elf_Scn* reloc_scn) {
         else // ptr in unknown section
             rela_unmatched.push_back(rela);
     }
+
+    GElf_Sym sym;
+    Elf_Data * d2 = elf_getdata(symtab_scn, nullptr);
+    gelf_getshdr(symtab_scn, &shdr);
+    shsymtab = shdr.sh_link;
+    for (size_t i=0; i < d2->d_size / shdr.sh_entsize; i++) {
+        gelf_getsym(d2, i, &sym);
+        if (mvcs.inside(sym.st_value))
+            mvcs.add_sym(sym);
+        else if (mvvar.inside(sym.st_value))
+            mvvar.add_sym(sym);
+        else if (mvfn.inside(sym.st_value))
+            mvfn.add_sym(sym);
+        else if (mvtext.inside(sym.st_value))
+            mvtext.add_sym(sym);
+        else if (mvdata.inside(sym.st_value))
+            mvdata.add_sym(sym);
+        else if (data.inside(sym.st_value))
+            data.add_sym(sym);
+        else
+            syms_other.push_back(sym);
+    }
+
 }
 
 
@@ -227,94 +277,98 @@ void Bintail::apply(string change_str) {
     }
 }
 
-void Bintail::trim_var() {
+/*
+ * TODO: mvtext
+ */
+void Bintail::trim() {
+    // Remove relocs from multiverse sections
     mvvar.relocs.clear();
-    auto buf = reinterpret_cast<mv_info_var*>(mvvar.buf());
-    int cnt = 0;
-    uint64_t off = mvvar.vaddr();
+    mvfn.relocs.clear();
+    mvcs.relocs.clear();
+    mvdata.relocs.clear();
+
+    size_t mvvar_sz = 0;
+    size_t mvfn_sz = 0;
+    size_t mvdata_sz = 0;
+    size_t mvcs_sz = 0;
 
     for (auto& e:vars) {
         if (e->frozen)
             continue;
-        e->make_info(buf, &mvvar, off);
-        off += sizeof(mv_info_fn);
-        buf++; cnt++;
+        mvvar_sz += e->make_info( mvvar.buf()+mvvar_sz, &mvvar,
+                mvvar.vaddr()+mvvar_sz);
     }
-    auto size = cnt*sizeof(struct mv_info_var);
-
-    auto sym = symbols.get_sym_val("__stop___multiverse_var_ptr"s);
-    uint64_t sec_end_new = data.get_value(sym) - mvvar.size() + size;
-    data.set_data_ptr(sym, sec_end_new);
-
-    mvvar.set_size(size);
-    mvvar.set_dirty();
-}
-
-void Bintail::trim_fn() {
-    mvfn.relocs.clear();
-    auto buf = reinterpret_cast<mv_info_fn*>(mvfn.buf());
-    int cnt = 0;
-    uint64_t off = mvfn.vaddr();
-
     for (auto& e:fns) {
         if (e->is_fixed())
             continue;
-        e->make_info(buf, &mvfn, off);
-        off += sizeof(mv_info_fn);
-        buf++; cnt++;
+        e->set_mvfn_vaddr(mvdata.vaddr() + mvdata_sz);
+        mvdata_sz += e->make_mvdata(mvdata.buf() + mvdata_sz, &mvdata,
+                mvdata.vaddr() + mvdata_sz);
+        mvfn_sz += e->make_info(mvfn.buf() + mvfn_sz, &mvfn,
+                mvfn.vaddr() + mvfn_sz);
     }
-
-    auto size = cnt*sizeof(struct mv_info_fn);
-
-    auto sym = symbols.get_sym_val("__stop___multiverse_fn_ptr"s);
-    uint64_t sec_end_old = data.get_value(sym);
-    uint64_t sec_end_new = sec_end_old - mvfn.size() + size;
-    data.set_data_ptr(sym, sec_end_new);
-
-    mvfn.set_size(size);
-    mvfn.set_dirty();
-}
-
-void Bintail::trim_cs() {
-    mvcs.relocs.clear();
-    auto buf = reinterpret_cast<mv_info_callsite*>(mvcs.buf());
-    int cnt = 0;
-    uint64_t off = mvcs.vaddr();
-
     for (auto& e:pps) {
         if ( e->_fn->is_fixed() || e->pp.type == PP_TYPE_X86_JUMP)
             continue;
-        e->make_info(buf, &mvcs, off);
-        off += sizeof(mv_info_callsite);
-        buf++; cnt++;
+        mvcs_sz += e->make_info(mvcs.buf()+mvcs_sz, &mvcs, mvcs.vaddr()+mvcs_sz);
     }
-    auto size = cnt*sizeof(struct mv_info_callsite);
 
-    auto sym = symbols.get_sym_val("__stop___multiverse_callsite_ptr"s);
-    uint64_t sec_end_old = data.get_value(sym);
-    uint64_t sec_end_new = sec_end_old - mvcs.size() + size;
-    data.set_data_ptr(sym, sec_end_new);
+    // Symbols
+    // stop is first after shdr.sh_size
+    // mvvar > mvdata > mvfn > mvcs
+    auto var_start   = mvvar.get_sym(shsymtab, "__start___multiverse_var_"s).value();
+    auto var_stop    = mvdata.get_sym(shsymtab, "__stop___multiverse_var_"s).value();
+    auto var_ary     = mvvar.get_sym(shsymtab, "__multiverse_var_ary_"s).value();
+    auto fn_start     = mvfn.get_sym(shsymtab, "__start___multiverse_fn_"s).value();
+    auto fn_stop      = mvcs.get_sym(shsymtab, "__stop___multiverse_fn_"s).value();
+    auto fn_ary       = mvfn.get_sym(shsymtab, "__multiverse_fn_ary_"s).value();
+    auto cs_start     = mvcs.get_sym(shsymtab, "__start___multiverse_callsite_"s).value();
+    auto cs_stop = find_if(syms_other.begin(), syms_other.end(), [this](auto& sym) {
+            auto symname = elf_strptr(e, shsymtab, sym.st_name);
+            return "__stop___multiverse_callsite_"s == symname;
+            }).base();
+    auto cs_ary       = mvcs.get_sym(shsymtab, "__multiverse_callsite_ary_"s).value();
+    auto var_stop_ptr = data.get_sym(shsymtab, "__stop___multiverse_var_ptr"s).value();
+    auto fn_stop_ptr  = data.get_sym(shsymtab, "__stop___multiverse_fn_ptr"s).value();
+    auto cs_stop_ptr  = data.get_sym(shsymtab, "__stop___multiverse_callsite_ptr"s).value();
 
-    mvcs.set_size(size);
+    // Find matching reloc
+    // stop is first after shdr.sh_size
+    // mvvar > mvdata > mvfn > mvcs
+    auto rvar_stop = mvdata.get_rela(var_stop->st_value).value();
+    auto rfar_stop = mvcs.get_rela(fn_stop->st_value).value();
+    auto rcar_stop = find_if(rela_unmatched.begin(), rela_unmatched.end(),
+            [cs_stop](auto& rela) {
+                return cs_stop->st_value == static_cast<uint64_t>(rela.r_addend);
+            }).base();
+
+    var_stop->st_value = var_start->st_value+mvvar_sz-sizeof(mv_info_var);
+    fn_stop->st_value = fn_start->st_value+mvfn_sz-sizeof(mv_info_fn);
+    cs_stop->st_value = cs_start->st_value+mvcs_sz-sizeof(mv_info_callsite);
+
+    var_ary->st_size = mvvar_sz;
+    fn_ary->st_size = mvfn_sz;
+    cs_ary->st_size = mvcs_sz;
+
+    // ToDo(Felix): Link sym & reloc
+    data.set_data_ptr(var_stop_ptr->st_value, var_stop->st_value);
+    rvar_stop->r_addend = var_stop->st_value;
+    data.set_data_ptr(fn_stop_ptr->st_value, fn_stop->st_value);
+    rfar_stop->r_addend = fn_stop->st_value;
+    data.set_data_ptr(cs_stop_ptr->st_value, cs_stop->st_value);
+    rcar_stop->r_addend = cs_stop->st_value;
+
+    mvvar.set_size(mvvar_sz);
+    mvfn.set_size(mvfn_sz);
+    mvdata.set_size(mvdata_sz);
+    mvcs.set_size(mvcs_sz);
+
+    mvfn.set_dirty();
+    mvvar.set_dirty();
+    mvdata.set_dirty();
     mvcs.set_dirty();
-}
 
-void Bintail::trim_mvdata() {
-    cout << "TODO(felix): trim_mvdata\n";
-}
-
-void Bintail::trim_mvtext() {
-    cout << "TODO(felix): trim_mvtext\n";
-}
-
-void Bintail::trim() {
-    trim_var();
-    trim_fn();
-    trim_cs();
-    trim_mvdata();
-    trim_mvtext();
-
-    update_relocs();
+    update_relocs_sym();
     dynamic.write();
 }
 
@@ -329,16 +383,39 @@ void Bintail::write() {
         errx(1, "elf_update(write) failed.");
 }
 
+void Bintail::print_sym() {
+#define PRINT_SYM(S) \
+    cout << ANSI_COLOR_YELLOW #S ":\n" ANSI_COLOR_RESET; \
+    S.print_sym(shsymtab);
+
+    PRINT_SYM(mvcs);
+    PRINT_SYM(mvfn);
+    PRINT_SYM(mvvar);
+    PRINT_SYM(mvtext);
+    PRINT_SYM(mvdata);
+
+    cout << ANSI_COLOR_RED "\nSym other:\n" ANSI_COLOR_RESET; 
+    for (auto& sym : syms_other) {
+        cout << "\t" << setw(34) << sym.st_name << hex
+             << " type=" << GELF_ST_TYPE(sym.st_info)
+             << " bind=" << GELF_ST_BIND(sym.st_info) << " "
+             << sym.st_other << "\t" /* Symbol visibility */
+             << sym.st_value << "\t" /* Symbol value */
+             << sym.st_size   << "\t" /* Symbol size */
+             << endl;
+    }
+}
+
 void Bintail::print_reloc() {
-#define PRINT_RAW(S, T) \
+#define PRINT_RELOC(S, T) \
     cout << ANSI_COLOR_YELLOW #S ":\n" ANSI_COLOR_RESET; \
     S.print(sizeof(T));
 
-    PRINT_RAW(mvcs, mv_info_callsite);
-    PRINT_RAW(mvfn, mv_info_fn);
-    PRINT_RAW(mvvar, mv_info_var);
-    PRINT_RAW(mvtext, mv_info_callsite);
-    PRINT_RAW(mvdata, mv_info_callsite);
+    PRINT_RELOC(mvcs, mv_info_callsite);
+    PRINT_RELOC(mvfn, mv_info_fn);
+    PRINT_RELOC(mvvar, mv_info_var);
+    PRINT_RELOC(mvtext, mv_info_callsite);
+    PRINT_RELOC(mvdata, mv_info_callsite);
 
     cout << ANSI_COLOR_RED "\nRela unmatched:\n" ANSI_COLOR_RESET; 
     for (auto rela : rela_unmatched) {
@@ -354,17 +431,6 @@ void Bintail::print_reloc() {
 void Bintail::print_dyn() {
     cout << ANSI_COLOR_YELLOW ".dynamic: \n" ANSI_COLOR_RESET;
     dynamic.print();
-}
-
-void Bintail::print_sym() {
-    cout << ANSI_COLOR_YELLOW "MVVAR syms: \n" ANSI_COLOR_RESET;
-    symbols.print_sym(e, mvvar.ndx() );
-    cout << ANSI_COLOR_YELLOW "MVFN syms: \n" ANSI_COLOR_RESET;
-    symbols.print_sym(e, mvfn.ndx() );
-    cout << ANSI_COLOR_YELLOW "MVCS syms: \n" ANSI_COLOR_RESET;
-    symbols.print_sym(e, mvcs.ndx() );
-    cout << ANSI_COLOR_YELLOW "DATA syms: \n" ANSI_COLOR_RESET;
-    symbols.print_sym(e, data.ndx() );
 }
 
 void Bintail::print() {

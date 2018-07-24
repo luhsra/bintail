@@ -1,5 +1,6 @@
 #include <iostream>
 #include <iomanip>
+#include <optional>
 #include <algorithm>
 #include <array>
 #include <exception>
@@ -14,7 +15,28 @@
 
 using namespace std;
 
-//------------------Symbols------------------------------------
+//------------------DataSection--------------------------------
+void DataSection::clear() {
+    ds.clear();
+}
+
+void DataSection::add_data(MVData* md) {
+    ds.push_back(md);
+}
+
+void DataSection::write() {
+    relocs.clear();
+    auto buf = reinterpret_cast<byte*>(data->d_buf);
+    uint64_t off = 0;
+
+    for (auto& e:ds)
+        off += e->make_info(buf + off, this, shdr.sh_addr + off);
+
+    set_size(off);
+    set_dirty();
+}
+
+//------------------Dynamic------------------------------------
 void Dynamic::load(Elf* e, Elf_Scn* s) {
     Section::load(e,s);
     auto d = elf_getdata(scn, nullptr);
@@ -58,76 +80,65 @@ void Dynamic::write() {
     set_dirty();
 }
 
-//------------------Symbols------------------------------------
-void Symbols::load(Elf* e, Elf_Scn* s) {
-    elf = e;
-    scn = s;
-    gelf_getshdr(s, &shdr);
-
-    auto d = elf_getdata(scn, nullptr);
-    for (size_t i=1; i < d->d_size / shdr.sh_entsize; i++) {
-        auto sym = make_unique<GElf_Sym>();
-        gelf_getsym(d, i, sym.get());
-        syms.push_back(std::move(sym));
-    }
-}
-
-size_t Symbols::get_sym_val(string symbol) {
+//------------------Section------------------------------------
+void Section::print_sym(size_t shsymtab) {
     for (auto& sym : syms) {
-        auto symname = elf_strptr(elf, shdr.sh_link, sym->st_name);
-        if (symbol == symname)
-            return sym->st_value;
-    }
-    return 0;
-}
-
-void Symbols::print_sym(Elf * elf, size_t shndx) {
-    for (auto& sym : syms) {
-        if (sym->st_shndx != shndx)
+        if (sym.st_shndx != ndx())
             continue;
 
-        auto symname = elf_strptr(elf, shdr.sh_link, sym->st_name);
+        auto symname = elf_strptr(elf, shsymtab, sym.st_name);
         if (symname[0] == '\0')
             continue;
 
         cout << "\t" << setw(34) << symname << hex
-             << " type=" << GELF_ST_TYPE(sym->st_info)
-             << " bind=" << GELF_ST_BIND(sym->st_info) << " "
-             << sym->st_other << "\t" /* Symbol visibility */
-             << sym->st_value << "\t" /* Symbol value */
-             << sym->st_size   << "\t" /* Symbol size */
+             << " type=" << GELF_ST_TYPE(sym.st_info)
+             << " bind=" << GELF_ST_BIND(sym.st_info) << " "
+             << sym.st_other << "\t" /* Symbol visibility */
+             << sym.st_value << "\t" /* Symbol value */
+             << sym.st_size   << "\t" /* Symbol size */
              << endl;
     }
 }
 
-//------------------Section------------------------------------
 void Section::print(size_t row) {
     auto p = (uint8_t *)data->d_buf;
     auto v = vaddr();
 
     cout << " 0x" << hex << v << ": ";
     for (auto n = 0u; n < data->d_size; n++) {
-        if (get_rela(v+n))
-            cout << ANSI_COLOR_BLUE;
+        if (auto r = get_rela(v+n); r.has_value())
+            cout << ANSI_COLOR_BLUE << "[0x" << r.value()->r_addend << "]";
         else
             cout << ANSI_COLOR_RESET;
         printf("%02x ", *(p+n));
         if (n%4 == 3)   printf(" ");
         if (n%row == row-1) 
-            cout << "\n 0x" << hex << v+n << ": ";
+            cout << "\n 0x" << hex << v+n+1 << ": ";
     }
     cout << "\n";
 }
 
-GElf_Rela* Section::get_rela(uint64_t vaddr) {
+optional<GElf_Rela*> Section::get_rela(uint64_t vaddr) {
     auto r = find_if(relocs.begin(), relocs.end(),
                 [vaddr](const GElf_Rela& r) { return r.r_offset == vaddr; }); 
     if (r == relocs.end())
-        return nullptr;
+        return {};
     else
         return r.base();
 
 }
+
+std::optional<GElf_Sym*> Section::get_sym(size_t sym_ndx, string symbol) {
+    auto it = find_if(syms.begin(), syms.end(), [sym_ndx,&symbol,this](auto& sym) {
+            auto symname = elf_strptr(elf, sym_ndx, sym.st_name);
+            return symbol == symname;
+            });
+    if (it != syms.end())
+        return it.base();
+    else
+        return {};
+}
+
 
 uint64_t Section::get_data_offset(uint64_t addr) {
     auto offset = addr - shdr.sh_addr;
@@ -148,6 +159,10 @@ string Section::get_string(uint64_t addr) {
 
 void Section::add_rela(GElf_Rela rela) {
     relocs.push_back(rela);
+}
+
+void Section::add_sym(GElf_Sym sym) {
+    syms.push_back(sym);
 }
 
 bool Section::inside(uint64_t addr) {
