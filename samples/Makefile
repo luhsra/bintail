@@ -1,7 +1,7 @@
 CC = gcc
 
 ifneq (${SESSION},ubuntu)
-	MV_DIR=../../../multiverse
+	MV_DIR=../../multiverse
 	PLUGIN_DIR=$(MV_DIR)/gcc-plugin
 	PLUGIN=$(PLUGIN_DIR)/multiverse.so
 	LIBRARY_DIR=$(MV_DIR)/libmultiverse

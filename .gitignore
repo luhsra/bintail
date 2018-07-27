@@ -1,0 +1,11 @@
+*.o
+*.swp
+.d/
+tags
+_tmp/
+samples/no-lib
+samples/commit
+bintail
+edit
+before.txt
+after.txt
