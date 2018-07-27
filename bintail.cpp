@@ -445,7 +445,7 @@ Bintail::Bintail(string filename) {
     if (elf_version(EV_CURRENT) == EV_NONE)
         errx(1, "libelf init failed");
     if ((fd = open(filename.c_str(), O_RDWR)) == -1) 
-        errx(1, "open %s failed.", filename.c_str());
+        errx(1, "open %s failed. %s", filename.c_str(), strerror(errno));
     if ((e = elf_begin(fd, ELF_C_RDWR, NULL)) == nullptr)
         errx(1, "elf_begin RDWR failed.");
     gelf_getehdr(e, &ehdr);
