@@ -17,69 +17,98 @@
 using namespace std;
 
 void Bintail::load() {
-    Elf_Scn * scn = nullptr;
+    Elf_Scn *scn = nullptr;
     GElf_Shdr shdr;
-    char * shname;
 
     /* find mv sections */
     while((scn = elf_nextscn(e, scn)) != nullptr) {
-        gelf_getshdr(scn, &shdr);
-        shname = elf_strptr(e, shstrndx, shdr.sh_name);
-
         struct sec s;
-        s.addr = shdr.sh_addr;
-        s.size = shdr.sh_size;
-        s.off = shdr.sh_offset;
-        s.name = string(shname);
+        gelf_getshdr(scn, &shdr);
+        s.scn = scn;
+        s.shdr = shdr;
+        s.name = elf_strptr(e, shstrndx, shdr.sh_name);
         secs.push_back(s);
-        
-        if ("__multiverse_var_"s == shname)
-            mvvar.load(e, scn);
-        else if ("__multiverse_fn_"s == shname)
-            mvfn.load(e, scn);
-        else if ("__multiverse_callsite_"s == shname)
-            mvcs.load(e, scn);
-        else if ("__multiverse_data_"s == shname)
-            mvdata.load(e, scn);
-        else if ("__multiverse_text_"s == shname)
-            mvtext.load(e, scn);
-        else if (".rodata"s == shname)
-            rodata.load(e, scn);
-        else if (".data"s == shname)
-            data.load(e, scn);
-        else if (".text"s == shname)
-            text.load(e, scn);
-        else if (".symtab"s == shname)
-            symtab_scn = scn;
-        else if (".dynamic"s == shname)
-            dynamic.load(e, scn);
-        else if (shdr.sh_type == SHT_RELA && shdr.sh_info == 0)
-            reloc_scn = scn;
-        else
-            continue;
     }
-
-    assert(data.size() > 0 && text.size() > 0 && rodata.size() > 0);
-
-    read_info_var(&mvvar);
-    read_info_fn(&mvfn);
-    read_info_cs(&mvcs);
+    for (const auto& sec : secs) {
+        if (sec.name == "__multiverse_var_")
+            mvvar.load(e, sec.scn);
+        else if (sec.name == "__multiverse_fn_")
+            mvfn.load(e, sec.scn);
+        else if (sec.name == "__multiverse_callsite_")
+            mvcs.load(e, sec.scn);
+        else if (sec.name == "__multiverse_data_")
+            mvdata.load(e, sec.scn);
+        else if (sec.name == "__multiverse_text_")
+            mvtext.load(e, sec.scn);
+        else if (sec.name == ".rodata")
+            rodata.load(e, sec.scn);
+        else if (sec.name == ".data")
+            data.load(e, sec.scn);
+        else if (sec.name == ".text")
+            text.load(e, sec.scn);
+        else if (sec.name == ".symtab")
+            symtab_scn = sec.scn;
+        else if (sec.name == ".dynamic")
+            dynamic.load(e, sec.scn);
+        else if (sec.shdr.sh_type == SHT_RELA && sec.shdr.sh_info == 0)
+            reloc_scn = sec.scn;
+    }
+    read_info_var(mvvar.scn);
+    read_info_fn(mvfn.scn);
+    read_info_cs(mvcs.scn);
     add_fns();
     link_pp_fn();
-    scatter_reloc_sym(reloc_scn, symtab_scn);
+
+    gelf_getshdr(reloc_scn, &shdr);
+    auto d = elf_getdata(reloc_scn, nullptr);
+
+    GElf_Rela rela;
+    for (size_t i=0; i < d->d_size / shdr.sh_entsize; i++) {
+        gelf_getrela(d, i, &rela);
+        auto claims = 0u;
+        claims += mvvar.probe_rela(&rela);
+        claims += mvfn.probe_rela(&rela);
+        claims += mvcs.probe_rela(&rela);
+        claims += mvtext.probe_rela(&rela);
+        claims += mvdata.probe_rela(&rela);
+        if (claims == 0)
+            rela_other.push_back(rela);
+    }
+
+    GElf_Sym sym;
+    Elf_Data * d2 = elf_getdata(symtab_scn, nullptr);
+    gelf_getshdr(symtab_scn, &shdr);
+    shsymtab = shdr.sh_link;
+    for (size_t i=0; i < d2->d_size / shdr.sh_entsize; i++) {
+        gelf_getsym(d2, i, &sym);
+        if (mvcs.inside(sym.st_value))
+            mvcs.add_sym(sym);
+        else if (mvvar.inside(sym.st_value))
+            mvvar.add_sym(sym);
+        else if (mvfn.inside(sym.st_value))
+            mvfn.add_sym(sym);
+        else if (mvtext.inside(sym.st_value))
+            mvtext.add_sym(sym);
+        else if (mvdata.inside(sym.st_value))
+            mvdata.add_sym(sym);
+        else if (data.inside(sym.st_value))
+            data.add_sym(sym);
+        else
+            syms_other.push_back(sym);
+    }
 }
 
-void Bintail::read_info_var(Section* mvvar) {
-    for (auto i = 0; i * sizeof(struct mv_info_var) < mvvar->size(); i++) {
-        auto e = *((struct mv_info_var*)mvvar->buf() + i);
+void Bintail::read_info_var(Elf_Scn *scn) {
+    auto infos = mvvar.read(scn);
+    for (auto e : *infos) {
         auto var = make_unique<MVVar>(e, &rodata, &data);
         vars.push_back(move(var));
     }
 }
 
-void Bintail::read_info_fn(Section* mvfn) {
-    for (auto i = 0; i * sizeof(struct mv_info_fn) < mvfn->size(); i++) {
-        auto e = *((struct mv_info_fn*)mvfn->buf() + i);
+void Bintail::read_info_fn(Elf_Scn *scn) {
+    auto infos = mvfn.read(scn);
+    for (auto e : *infos) {
         auto f = make_unique<MVFn>(e, &mvdata, &mvtext);
         auto pp = make_unique<MVPP>(f.get());
         f->add_pp(pp.get());
@@ -89,9 +118,9 @@ void Bintail::read_info_fn(Section* mvfn) {
     }
 }
 
-void Bintail::read_info_cs(Section* mvcs) {
-    for (auto i = 0; i * sizeof(struct mv_info_callsite) < mvcs->size(); i++) {
-        auto e = *((struct mv_info_callsite*)mvcs->buf() + i);
+void Bintail::read_info_cs(Elf_Scn *scn) {
+    auto infos = mvcs.read(scn);
+    for (auto e : *infos) {
         auto pp = make_unique<MVPP>(e, &text, &mvtext);
         pps.push_back(move(pp));
     }
@@ -109,7 +138,6 @@ void Bintail::update_relocs_sym() {
     };
 
     vector<GElf_Rela>* rvv[] = { 
-        &rela_unmatched,
         &data.relocs,
         &mvvar.relocs,
         &mvdata.relocs,
@@ -196,58 +224,6 @@ void Bintail::link_pp_fn() {
     }
 }
 
-void Bintail::scatter_reloc_sym(Elf_Scn* reloc_scn, Elf_Scn* symtab_scn) {
-    GElf_Rela rela;
-    GElf_Shdr shdr;
-
-    Elf_Data * d = elf_getdata(reloc_scn, nullptr);
-    gelf_getshdr(reloc_scn, &shdr);
-    for (size_t i=0; i < d->d_size / shdr.sh_entsize; i++) {
-        gelf_getrela(d, i, &rela);
-
-        if (rela.r_info != R_X86_64_RELATIVE) // no ptr
-            rela_other.push_back(rela);
-        else if (mvcs.inside(rela.r_offset))
-            mvcs.add_rela(rela);
-        else if (mvvar.inside(rela.r_offset))
-            mvvar.add_rela(rela);
-        else if (mvfn.inside(rela.r_offset))
-            mvfn.add_rela(rela);
-        else if (mvtext.inside(rela.r_offset))
-            mvtext.add_rela(rela);
-        else if (mvdata.inside(rela.r_offset))
-            mvdata.add_rela(rela);
-        else if (data.inside(rela.r_offset))
-            data.add_rela(rela);
-        else // ptr in unknown section
-            rela_unmatched.push_back(rela);
-    }
-
-    GElf_Sym sym;
-    Elf_Data * d2 = elf_getdata(symtab_scn, nullptr);
-    gelf_getshdr(symtab_scn, &shdr);
-    shsymtab = shdr.sh_link;
-    for (size_t i=0; i < d2->d_size / shdr.sh_entsize; i++) {
-        gelf_getsym(d2, i, &sym);
-        if (mvcs.inside(sym.st_value))
-            mvcs.add_sym(sym);
-        else if (mvvar.inside(sym.st_value))
-            mvvar.add_sym(sym);
-        else if (mvfn.inside(sym.st_value))
-            mvfn.add_sym(sym);
-        else if (mvtext.inside(sym.st_value))
-            mvtext.add_sym(sym);
-        else if (mvdata.inside(sym.st_value))
-            mvdata.add_sym(sym);
-        else if (data.inside(sym.st_value))
-            data.add_sym(sym);
-        else
-            syms_other.push_back(sym);
-    }
-
-}
-
-
 void Bintail::change(string change_str) {
     string var_name;
     int value;
@@ -292,25 +268,42 @@ void Bintail::trim() {
     size_t mvdata_sz = 0;
     size_t mvcs_sz = 0;
 
+    GElf_Shdr shdr;
+    byte* buf;
+    byte* dbuf;
+    uint64_t vaddr;
+    uint64_t dvaddr;
+
+    buf = static_cast<byte*>(elf_getdata(mvvar.scn, nullptr)->d_buf);
+    gelf_getshdr(mvvar.scn, &shdr);
+    vaddr = shdr.sh_addr;
     for (auto& e:vars) {
         if (e->frozen)
             continue;
-        mvvar_sz += e->make_info( mvvar.buf()+mvvar_sz, &mvvar,
-                mvvar.vaddr()+mvvar_sz);
+        mvvar_sz += e->make_info(buf+mvvar_sz, &mvvar, vaddr+mvvar_sz);
     }
+
+    buf = static_cast<byte*>(elf_getdata(mvfn.scn, nullptr)->d_buf);
+    dbuf = static_cast<byte*>(elf_getdata(mvdata.scn, nullptr)->d_buf);
+    gelf_getshdr(mvfn.scn, &shdr);
+    vaddr = shdr.sh_addr;
+    gelf_getshdr(mvdata.scn, &shdr);
+    dvaddr = shdr.sh_addr;
     for (auto& e:fns) {
         if (e->is_fixed())
             continue;
-        e->set_mvfn_vaddr(mvdata.vaddr() + mvdata_sz);
-        mvdata_sz += e->make_mvdata(mvdata.buf() + mvdata_sz, &mvdata,
-                mvdata.vaddr() + mvdata_sz);
-        mvfn_sz += e->make_info(mvfn.buf() + mvfn_sz, &mvfn,
-                mvfn.vaddr() + mvfn_sz);
+        e->set_mvfn_vaddr(dvaddr + mvdata_sz);
+        mvdata_sz += e->make_mvdata(dbuf+mvdata_sz, &mvdata, dvaddr+mvdata_sz);
+        mvfn_sz += e->make_info(buf+mvfn_sz, &mvfn, vaddr+mvfn_sz);
     }
+
+    buf = static_cast<byte*>(elf_getdata(mvcs.scn, nullptr)->d_buf);
+    gelf_getshdr(mvcs.scn, &shdr);
+    vaddr = shdr.sh_addr;
     for (auto& e:pps) {
         if ( e->_fn->is_fixed() || e->pp.type == PP_TYPE_X86_JUMP)
             continue;
-        mvcs_sz += e->make_info(mvcs.buf()+mvcs_sz, &mvcs, mvcs.vaddr()+mvcs_sz);
+        mvcs_sz += e->make_info(buf+mvcs_sz, &mvcs, vaddr+mvcs_sz);
     }
 
     // Symbols
@@ -337,7 +330,7 @@ void Bintail::trim() {
     // mvvar > mvdata > mvfn > mvcs
     auto rvar_stop = mvdata.get_rela(var_stop->st_value).value();
     auto rfar_stop = mvcs.get_rela(fn_stop->st_value).value();
-    auto rcar_stop = find_if(rela_unmatched.begin(), rela_unmatched.end(),
+    auto rcar_stop = find_if(rela_other.begin(), rela_other.end(),
             [cs_stop](auto& rela) {
                 return cs_stop->st_value == static_cast<uint64_t>(rela.r_addend);
             }).base();
@@ -362,11 +355,6 @@ void Bintail::trim() {
     mvfn.set_size(mvfn_sz);
     mvdata.set_size(mvdata_sz);
     mvcs.set_size(mvcs_sz);
-
-    mvfn.set_dirty();
-    mvvar.set_dirty();
-    mvdata.set_dirty();
-    mvcs.set_dirty();
 
     update_relocs_sym();
     dynamic.write();
@@ -417,12 +405,13 @@ void Bintail::print_reloc() {
     PRINT_RELOC(mvtext, mv_info_callsite);
     PRINT_RELOC(mvdata, mv_info_callsite);
 
-    cout << ANSI_COLOR_RED "\nRela unmatched:\n" ANSI_COLOR_RESET; 
-    for (auto rela : rela_unmatched) {
+    cout << ANSI_COLOR_RED "\nRela other:\n" ANSI_COLOR_RESET; 
+    for (auto rela : rela_other) {
         cout << hex << " offset=0x" << rela.r_offset
              << " addend=0x" << rela.r_addend;
         for (auto s : secs)
-            if (rela.r_offset < s.addr + s.size && rela.r_offset >= s.addr)
+            if (rela.r_offset < s.shdr.sh_addr + s.shdr.sh_size 
+                    && rela.r_offset >= s.shdr.sh_addr)
                 cout << " - " << s.name;
         cout << endl;
     }
@@ -435,7 +424,7 @@ void Bintail::print_dyn() {
 
 void Bintail::print() {
     for (auto& var : vars)
-        var->print(&rodata, &data, &text, &mvtext);
+        var->print(&rodata, &text, &mvtext);
 }
 
 Bintail::Bintail(string filename) {

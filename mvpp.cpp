@@ -7,6 +7,15 @@ using namespace std;
 #include "bintail.h"
 #include "mvpp.h"
 
+/* Dup from mvvar.cpp */
+static const GElf_Rela make_rela(uint64_t source, uint64_t target) {
+    GElf_Rela rela;
+    rela.r_addend = target;
+    rela.r_info = R_X86_64_RELATIVE;
+    rela.r_offset = source;
+    return rela;
+}
+
 static int location_len(mv_info_patchpoint_type type) {
     if (type == PP_TYPE_X86_CALL_INDIRECT) {
         return 6;
@@ -29,21 +38,13 @@ MVPP::MVPP(struct mv_info_callsite& cs, Section* text, Section* mvtext) {
     assert(!invalid());
 }
 
-size_t MVPP::make_info(byte* buf, Section* sec, uint64_t off) {
+size_t MVPP::make_info(byte* buf, Section* sec, uint64_t vaddr) {
     auto cs = reinterpret_cast<mv_info_callsite*>(buf);
-    GElf_Rela r1, r2;
-    
     cs->function_body = function_body;
-    r1.r_addend = cs->function_body;
-    r1.r_info = R_X86_64_RELATIVE;
-    r1.r_offset = off;
-    sec->relocs.push_back(r1);
-
     cs->call_label = pp.location;
-    r2.r_addend = cs->call_label;
-    r2.r_info = R_X86_64_RELATIVE;
-    r2.r_offset = off+sizeof(uint64_t);
-    sec->relocs.push_back(r2);
+
+    sec->relocs.push_back(make_rela(vaddr+offsetof(struct mv_info_callsite, function_body), function_body));
+    sec->relocs.push_back(make_rela(vaddr+offsetof(struct mv_info_callsite, call_label), pp.location));
     return sizeof(mv_info_callsite);
 }
 
@@ -71,10 +72,10 @@ void MVPP::print(Section* text, Section* mvtext) {
 
     if (text->inside(pp.location)) {
         txt = text;
-        cout << "\t\t@.text:0x" << hex << pp.location - txt->vaddr() << " Type:" << type;
+        cout << "\t\t@0x" << hex << pp.location << " Type:" << type;
     } else {
         txt = mvtext;
-        cout << "\t\t@.mvtext:0x" << hex << pp.location - txt->vaddr() << " Type:" << type;
+        cout << "\t\t@0x" << hex << pp.location << " Type:" << type;
     }
 
     if (fptr)
@@ -159,7 +160,8 @@ void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* m
                 << hex << pp.location << endl;
             return;
     } 
-    text->set_dirty();
+    auto d = elf_getdata(txt->scn, nullptr);
+    elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
 }
 
 void MVPP::patchpoint_revert() {

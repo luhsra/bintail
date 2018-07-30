@@ -91,6 +91,15 @@ public:
     virtual ~MVData() {}
 };
 
+class MVText : public MVData {
+public:
+    MVText(std::byte* buf, size_t size, uint64_t vaddr);
+    size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
+private:
+    long orig_vaddr;
+    std::vector<std::byte> instr;
+};
+
 class MVassign : public MVData {
 public:
     MVassign(struct mv_info_assignment& _assign);
@@ -111,7 +120,7 @@ public:
     size_t make_info_ass(std::byte* buf, Section* scn, uint64_t vaddr);
     void set_info_assigns(uint64_t vaddr);
     void check_var(MVVar* var, MVFn* fn);
-    void print(bool active, Section* data, Section* mvtext);
+    void print(bool active);
     bool active();
     bool frozen();
     /**
@@ -134,7 +143,7 @@ class MVFn : public MVData {
 public:
     MVFn(struct mv_info_fn& _fn, Section* data, Section* text);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
-    void print(Section* rodata, Section* data, Section* text, Section* mvtext);
+    void print(Section* rodata, Section* text, Section* mvtext);
     void check_var(MVVar* var);
     void add_pp(MVPP* pp);
     uint64_t location();
@@ -156,7 +165,7 @@ class MVVar : public MVData {
 public:
     MVVar(struct mv_info_var _var, Section* rodata, Section* data);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
-    void print(Section* rodata, Section* data, Section* text, Section* mvtext);
+    void print(Section* rodata, Section* text, Section* mvtext);
     void check_fns(std::vector<std::unique_ptr<MVFn>>& fns);
     void link_fn(MVFn* fn);
     void set_value(int v, Section* data);

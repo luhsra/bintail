@@ -16,30 +16,33 @@
 using namespace std;
 
 //------------------DataSection--------------------------------
-void DataSection::clear() {
-    ds.clear();
-}
-
 void DataSection::add_data(MVData* md) {
     ds.push_back(md);
 }
 
 void DataSection::write() {
-    relocs.clear();
-    auto buf = reinterpret_cast<byte*>(data->d_buf);
-    uint64_t off = 0;
+    auto d = elf_getdata(scn, nullptr);
+    auto buf = reinterpret_cast<byte*>(d->d_buf);
+    auto off = 0ul;
 
+    GElf_Shdr shdr;
+    gelf_getshdr(scn, &shdr);
+
+    relocs.clear();
     for (auto& e:ds)
         off += e->make_info(buf + off, this, shdr.sh_addr + off);
+    elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
 
     set_size(off);
-    set_dirty();
 }
 
 //------------------Dynamic------------------------------------
 void Dynamic::load(Elf* e, Elf_Scn* s) {
     Section::load(e,s);
     auto d = elf_getdata(scn, nullptr);
+    GElf_Shdr shdr;
+    gelf_getshdr(scn, &shdr);
+
     for (auto i=0; i * shdr.sh_entsize < d->d_size; i++) {
         auto dyn = make_unique<GElf_Dyn>();
         gelf_getdyn(d, i, dyn.get());
@@ -68,19 +71,25 @@ GElf_Dyn* Dynamic::get_dyn(int64_t tag) {
 
 void Dynamic::write() {
     int i = 0;
+    Elf_Data *d = elf_getdata(scn, nullptr);
     for (auto& dyn : dyns) 
-        if (!gelf_update_dyn (data, i++, dyn.get()))
+        if (!gelf_update_dyn(d, i++, dyn.get()))
             cout << "Error: gelf_update_dyn() "
                 << elf_errmsg(elf_errno()) << endl;
+    elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
 
-    assert(sizeof(GElf_Dyn) == shdr.sh_entsize);
     auto nsz = i * sizeof(GElf_Dyn);
-
     set_size(nsz);
-    set_dirty();
 }
 
 //------------------Section------------------------------------
+bool Section::probe_rela(GElf_Rela *rela) {
+    auto claim = false;
+    if ((claim = inside(rela->r_offset)))
+        relocs.push_back(*rela);
+    return claim;
+}
+
 void Section::print_sym(size_t shsymtab) {
     for (auto& sym : syms) {
         if (sym.st_shndx != ndx())
@@ -101,11 +110,15 @@ void Section::print_sym(size_t shsymtab) {
 }
 
 void Section::print(size_t row) {
-    auto p = (uint8_t *)data->d_buf;
-    auto v = vaddr();
+    Elf_Data *d = elf_getdata(scn, nullptr);
+    auto p = (uint8_t *)d->d_buf;
+    GElf_Shdr shdr;
+    gelf_getshdr(scn, &shdr);
+
+    auto v = shdr.sh_addr;
 
     cout << " 0x" << hex << v << ": ";
-    for (auto n = 0u; n < data->d_size; n++) {
+    for (auto n = 0u; n < d->d_size; n++) {
         if (auto r = get_rela(v+n); r.has_value())
             cout << ANSI_COLOR_BLUE << "[0x" << r.value()->r_addend << "]";
         else
@@ -141,6 +154,9 @@ std::optional<GElf_Sym*> Section::get_sym(size_t sym_ndx, string symbol) {
 
 
 uint64_t Section::get_data_offset(uint64_t addr) {
+    GElf_Shdr shdr;
+    gelf_getshdr(scn, &shdr);
+
     auto offset = addr - shdr.sh_addr;
     if (offset < 0 || offset >= shdr.sh_size)
         throw range_error("Address not inside section - "s + __func__);
@@ -148,17 +164,14 @@ uint64_t Section::get_data_offset(uint64_t addr) {
 }
 
 string Section::get_string(uint64_t addr) {
-    string str("");
+    auto str = ""s;
     auto offset = get_data_offset(addr);
+    auto d = elf_getdata(scn, nullptr);
 
-    auto start = offset - data->d_off;
-    const char * name = (char*)data->d_buf+start;
+    auto start = offset - d->d_off;
+    const char * name = (char*)d->d_buf+start;
     str += name;
     return str;
-}
-
-void Section::add_rela(GElf_Rela rela) {
-    relocs.push_back(rela);
 }
 
 void Section::add_sym(GElf_Sym sym) {
@@ -166,6 +179,9 @@ void Section::add_sym(GElf_Sym sym) {
 }
 
 bool Section::inside(uint64_t addr) {
+    GElf_Shdr shdr;
+    gelf_getshdr(scn, &shdr);
+
     bool not_above = addr < shdr.sh_addr + shdr.sh_size;
     bool not_below = addr >= shdr.sh_addr;
     return not_above && not_below;
@@ -177,10 +193,11 @@ bool Section::inside(uint64_t addr) {
  */
 uint8_t* Section::get_func_loc(uint64_t addr) {
     auto offset = get_data_offset(addr);
+    auto d = elf_getdata(scn, nullptr);
 
-    auto start = offset - data->d_off;
-    auto buf = static_cast<uint8_t*>(data->d_buf);
-    assert(start < data->d_size);
+    auto start = offset - d->d_off;
+    auto buf = static_cast<uint8_t*>(d->d_buf);
+    assert(start < d->d_size);
     return static_cast<uint8_t*>(buf+start);
 
     assert(false);
@@ -197,37 +214,33 @@ uint64_t Section::get_value(uint64_t addr) {
 
 void Section::set_data_int(uint64_t addr, int value) {
     auto offset = get_data_offset(addr);
+    auto d = elf_getdata(scn, nullptr);
 
-    /* single data obj on read, never add another */
-    assert(offset < data->d_size);
-
-    auto vptr = (int*)((uint8_t*)data->d_buf + offset); 
+    auto vptr = (int*)((uint8_t*)d->d_buf + offset); 
     *vptr = value;
 
-    elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
+    elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
 }
 
 void Section::set_data_ptr(uint64_t addr, uint64_t value) {
     auto offset = get_data_offset(addr);
+    auto d = elf_getdata(scn, nullptr);
 
-    /* single data obj on read, never add another */
-    assert(offset < data->d_size);
-
-    auto vptr = (uint64_t*)((uint8_t*)data->d_buf + offset); 
+    auto vptr = (uint64_t*)((uint8_t*)d->d_buf + offset); 
     *vptr = value;
 
-    elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
+    elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
 }
 
 void Section::set_size(uint64_t nsz) {
-    assert(nsz <= sz);
-    data->d_size = nsz;
+    GElf_Shdr shdr;
+    gelf_getshdr(scn, &shdr);
+    auto d = elf_getdata(scn, nullptr);
+
+    d->d_size = nsz;
     shdr.sh_size = nsz;
     sz = nsz;
-}
 
-void Section::set_dirty() {
-    elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
     gelf_update_shdr(scn, &shdr);
     elf_flagshdr(scn, ELF_C_SET, ELF_F_DIRTY);
 }
@@ -235,9 +248,10 @@ void Section::set_dirty() {
 void Section::load(Elf* e, Elf_Scn* s) {
     elf = e;
     scn = s;
+    
+    GElf_Shdr shdr;
     gelf_getshdr(s, &shdr);
-    sz = shdr.sh_size;
     max_size = shdr.sh_size;
-    data = elf_getdata(s, nullptr);
-    assert(data->d_size == sz);
+
+    assert(elf_getdata(s, nullptr)->d_size == shdr.sh_size);
 }

@@ -9,23 +9,46 @@ using namespace std;
 #include "mvpp.h"
 #include "bintail.h"
 
+static const GElf_Rela make_rela(uint64_t source, uint64_t target) {
+    GElf_Rela rela;
+    rela.r_addend = target;
+    rela.r_info = R_X86_64_RELATIVE;
+    rela.r_offset = source;
+    return rela;
+}
+
+//------------------MVText-----------------------------------
+MVText::MVText(std::byte *buf, size_t size, uint64_t vaddr) {
+    orig_vaddr = vaddr;
+    copy(buf, buf+size, instr.begin());
+}
+
+size_t MVText::make_info(std::byte *buf, Section* scn, uint64_t vaddr) {
+    copy(instr.cbegin(), instr.cend(), buf);
+
+    // Adjust relocations
+    for (auto& r : scn->relocs) {
+        uint64_t orig_target = r.r_addend;
+        uint64_t start = orig_vaddr;
+        uint64_t end = start + instr.size();
+        if (orig_target >= start && orig_target < end) {
+            auto target = orig_target - start + vaddr;
+            r.r_addend = target;
+        }
+    }
+    return instr.size();
+}
+
 //------------------MVassign-----------------------------------
 MVassign::MVassign(struct mv_info_assignment& _assign)
     :assign{_assign} { }
 
 size_t MVassign::make_info(byte* buf, Section* sec, uint64_t vaddr) {
     auto ass =  reinterpret_cast<mv_info_assignment*>(buf);
-    GElf_Rela r_loc;
-
     ass->variable.location = assign.variable.location;
-    r_loc.r_addend = ass->variable.location;
-    r_loc.r_info = R_X86_64_RELATIVE;
-    r_loc.r_offset = vaddr;
-    sec->relocs.push_back(r_loc);
-
     ass->lower_bound = assign.lower_bound;
     ass->upper_bound = assign.upper_bound;
-
+    sec->relocs.push_back(make_rela(vaddr, ass->variable.location));
     return sizeof(mv_info_assignment);
 }
 
@@ -41,7 +64,6 @@ bool MVassign::active() {
     auto low = assign.lower_bound;
     auto high = assign.upper_bound;
     auto val = var->value();
-
     return val >= low && val <= high;
 }
 
@@ -101,41 +123,26 @@ MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, Section* mvdata, Section* mvtext) {
 /* make mvfn & mvassings */
 size_t MVmvfn::make_info(byte* buf, Section* sec, uint64_t vaddr) {
     auto mfn =  reinterpret_cast<mv_info_mvfn*>(buf);
-    auto esz = 0ul;
-    GElf_Rela r_assign, r_fbody;
 
     mfn->function_body = mvfn.function_body;
-    r_fbody.r_addend = mfn->function_body;
-    r_fbody.r_info = R_X86_64_RELATIVE;
-    r_fbody.r_offset = vaddr;
-    sec->relocs.push_back(r_fbody);
-
+    mfn->assignments = mvfn.assignments; // set by set_info_assigns
     mfn->n_assignments = assigns.size();
-
     mfn->type = mvfn.type;
     mfn->constant = mvfn.constant;
 
-    esz += sizeof(mv_info_mvfn);
-
-    mfn->assignments = mvfn.assignments; // set by set_info_assigns
-    r_assign.r_addend = mfn->assignments;
-    r_assign.r_info = R_X86_64_RELATIVE;
-    r_assign.r_offset = vaddr+2*sizeof(uint64_t);
-    sec->relocs.push_back(r_assign);
-
-    return esz;
+    sec->relocs.push_back(make_rela(vaddr+offsetof(struct mv_info_mvfn, function_body), mvfn.function_body));
+    sec->relocs.push_back(make_rela(vaddr+offsetof(struct mv_info_mvfn, assignments), mvfn.assignments));
+    return sizeof(mv_info_mvfn);
 }
 
 void MVmvfn::set_info_assigns(uint64_t vaddr) {
     mvfn.assignments = vaddr;
 }
 
-
 size_t MVmvfn::make_info_ass(std::byte* buf, Section* scn, uint64_t vaddr) {
     auto esz = 0ul;
-    for (auto& a : assigns) {
+    for (auto& a : assigns)
         esz += a->make_info(buf+esz, scn, vaddr+esz);
-    }
     return esz;
 }
 
@@ -153,7 +160,7 @@ bool MVmvfn::frozen() {
     return true;
 }
 
-void MVmvfn::print(bool cur, Section* mvdata, Section* mvtext) {
+void MVmvfn::print(bool cur) {
     if (active())
         cout << ANSI_COLOR_YELLOW;
 
@@ -162,7 +169,7 @@ void MVmvfn::print(bool cur, Section* mvdata, Section* mvtext) {
     else
         cout << "    ";
 
-    cout << "mvfn@.mvtext:0x" << hex << mvfn.function_body - mvtext->vaddr();
+    cout << "mvfn@0x" << hex << mvfn.function_body;
 
     auto type = mvfn.type == MVFN_TYPE_NONE ? "none" :
            mvfn.type == MVFN_TYPE_NOP ? "nop" :
@@ -171,8 +178,8 @@ void MVmvfn::print(bool cur, Section* mvdata, Section* mvtext) {
            mvfn.type == MVFN_TYPE_STI ? "sti" : "unknown";
     cout << " type=" << type;
 
-    cout << "  -  assignments[] @.mvdata:0x" << hex
-        << mvfn.assignments - mvdata->vaddr() << "\n" ANSI_COLOR_RESET;
+    cout << "  -  assignments[] @0x" << hex
+        << mvfn.assignments << "\n" ANSI_COLOR_RESET;
     for (auto& assign : assigns)
         assign->print();
 }
@@ -204,29 +211,15 @@ void MVFn::set_mvfn_vaddr(uint64_t vaddr) {
 
 size_t MVFn::make_info(byte* buf, Section* sec, uint64_t vaddr) {
     auto f = reinterpret_cast<mv_info_fn*>(buf);
-    GElf_Rela r_name, r_fbody, r_mvfns;
-    
     f->name = fn.name;
-    r_name.r_addend = f->name;
-    r_name.r_info = R_X86_64_RELATIVE;
-    r_name.r_offset = vaddr;
-    sec->relocs.push_back(r_name);
-
     f->function_body = fn.function_body;
-    r_fbody.r_addend = f->function_body;
-    r_fbody.r_info = R_X86_64_RELATIVE;
-    r_fbody.r_offset = vaddr+sizeof(uint64_t);
-    sec->relocs.push_back(r_fbody);
-
     f->n_mv_functions = mvfns.size();
-
     f->mv_functions = mvfn_vaddr;
-    r_mvfns.r_addend = mvfn_vaddr;
-    r_mvfns.r_info = R_X86_64_RELATIVE;
-    r_mvfns.r_offset = vaddr+3*sizeof(uint64_t);
-    sec->relocs.push_back(r_mvfns);
-
     f->patchpoints_head = nullptr;
+
+    sec->relocs.push_back(make_rela(vaddr+offsetof(struct mv_info_fn, name), fn.name));
+    sec->relocs.push_back(make_rela(vaddr+offsetof(struct mv_info_fn, function_body), fn.function_body));
+    sec->relocs.push_back(make_rela(vaddr+offsetof(struct mv_info_fn, mv_functions), mvfn_vaddr));
     return sizeof(mv_info_fn);
 }
 
@@ -281,22 +274,19 @@ void MVFn::check_var(MVVar* var) {
         mvfn->check_var(var, this);
 }
 
-void MVFn::print(Section* rodata, Section* mvdata, Section* text, Section* mvtext) {
+void MVFn::print(Section* rodata, Section* text, Section* mvtext) {
     if (active == fn.function_body)
         cout << " -> ";
     else 
         cout << "    ";
     
-    cout << rodata->get_string(fn.name) 
-        << " @.mvtext:0x" << hex
-        << fn.function_body - mvtext->vaddr()
-        << "  -  mvfn[] @.mvdata:0x"
-        << fn.mv_functions - mvdata->vaddr() << "\n";
+    cout << rodata->get_string(fn.name) << " @0x" << hex << fn.function_body
+        << "  -  mvfn[] @0x" << fn.mv_functions<< "\n";
 
     for (auto &mvfn : mvfns) {
         auto mact = active == mvfn->location();
 
-        mvfn->print(mact, mvdata, mvtext);
+        mvfn->print(mact);
     }
     
     cout << "\tpatchpoints:\n";
@@ -316,32 +306,22 @@ MVVar::MVVar(struct mv_info_var _var, Section* rodata, Section* data)
     _value -= (_value >> b) << b;
 }
 
-void MVVar::print(Section* rodata, Section* data, Section* text, Section* mvtext) {
+void MVVar::print(Section* rodata, Section* text, Section* mvtext) {
     cout << "Var: " << rodata->get_string(var.name)
-        << "@.data:0x" << location() - data->vaddr() << "\n";
+        << "@:0x" << location() << "\n";
     for (auto& fn : fns)
-        fn->print(rodata, data, text, mvtext);
+        fn->print(rodata, text, mvtext);
 }
 
 size_t MVVar::make_info(byte* buf, Section* sec, uint64_t vaddr) {
-    auto v = reinterpret_cast<mv_info_var*>(buf);
-
-    GElf_Rela r_name, r_vloc;
-    
+    auto v = reinterpret_cast<struct mv_info_var*>(buf);
     v->name = var.name;
-    r_name.r_addend = v->name;
-    r_name.r_info = R_X86_64_RELATIVE;
-    r_name.r_offset = vaddr;
-    sec->relocs.push_back(r_name);
-
     v->variable_location = var.variable_location;
-    r_vloc.r_addend = v->variable_location;
-    r_vloc.r_info = R_X86_64_RELATIVE;
-    r_vloc.r_offset = vaddr+sizeof(uint64_t);
-    sec->relocs.push_back(r_vloc);
-
     v->info = var.info;
     v->functions_head = nullptr;
+
+    sec->relocs.push_back(make_rela(vaddr+offsetof(struct mv_info_var, name), var.name));
+    sec->relocs.push_back(make_rela(vaddr+offsetof(struct mv_info_var, variable_location), var.variable_location));
     return sizeof(struct mv_info_var);
 }
 

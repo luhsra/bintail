@@ -26,6 +26,7 @@ depend: .depend
 
 clean:
 	$(RM) $(OBJS)
+	$(RM) bintail
 	$(MAKE) -C samples clean
 
 test:
