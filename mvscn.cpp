@@ -7,7 +7,6 @@
 #include <string.h>
 #include <cassert>
 #include <memory>
-#include <gsl/gsl>
 
 #include "bintail.h"
 #include "mvelem.h"
@@ -95,25 +94,6 @@ bool Section::probe_rela(GElf_Rela *rela) {
     return claim;
 }
 
-void Section::print_sym(size_t shsymtab) {
-    for (auto& sym : syms) {
-        if (sym.st_shndx != ndx())
-            continue;
-
-        auto symname = elf_strptr(elf, shsymtab, sym.st_name);
-        if (symname[0] == '\0')
-            continue;
-
-        cout << "\t" << setw(34) << symname << hex
-             << " type=" << GELF_ST_TYPE(sym.st_info)
-             << " bind=" << GELF_ST_BIND(sym.st_info) << " "
-             << sym.st_other << "\t" /* Symbol visibility */
-             << sym.st_value << "\t" /* Symbol value */
-             << sym.st_size   << "\t" /* Symbol size */
-             << endl;
-    }
-}
-
 void Section::print(size_t row) {
     Elf_Data *d = elf_getdata(scn, nullptr);
     auto p = (uint8_t *)d->d_buf;
@@ -146,18 +126,6 @@ optional<GElf_Rela*> Section::get_rela(uint64_t vaddr) {
 
 }
 
-std::optional<GElf_Sym*> Section::get_sym(size_t sym_ndx, string symbol) {
-    auto it = find_if(syms.begin(), syms.end(), [sym_ndx,&symbol,this](auto& sym) {
-            auto symname = elf_strptr(elf, sym_ndx, sym.st_name);
-            return symbol == symname;
-            });
-    if (it != syms.end())
-        return it.base();
-    else
-        return {};
-}
-
-
 uint64_t Section::get_data_offset(uint64_t addr) {
     GElf_Shdr shdr;
     gelf_getshdr(scn, &shdr);
@@ -177,10 +145,6 @@ string Section::get_string(uint64_t addr) {
     const char * name = (char*)d->d_buf+start;
     str += name;
     return str;
-}
-
-void Section::add_sym(GElf_Sym sym) {
-    syms.push_back(sym);
 }
 
 bool Section::inside(uint64_t addr) {

@@ -16,6 +16,12 @@
 
 using namespace std;
 
+static uint64_t sym_value(vector<struct symbol> &syms, const char* name) {
+    return find_if(syms.cbegin(), syms.cend(), [name](auto& s) {
+            return s.name == name;
+            }).base()->sym.st_value;
+}
+
 void Bintail::load() {
     Elf_Scn *scn = nullptr;
     GElf_Shdr shdr;
@@ -58,42 +64,36 @@ void Bintail::load() {
     add_fns();
     link_pp_fn();
 
+    GElf_Sym sym;
+    Elf_Data * d2 = elf_getdata(symtab_scn, nullptr);
+    gelf_getshdr(symtab_scn, &shdr);
+    for (size_t i=0; i < d2->d_size / shdr.sh_entsize; i++) {
+        gelf_getsym(d2, i, &sym);
+        struct symbol s;
+        s.sym = sym;
+        s.name = elf_strptr(e, shdr.sh_link, sym.st_name);
+        syms.push_back(s);
+    }
+    mvvar.start_ptr = sym_value(syms, "__start___multiverse_var_ptr");
+    mvvar.stop_ptr  = sym_value(syms, "__stop___multiverse_var_ptr");
+    mvfn.start_ptr  = sym_value(syms, "__start___multiverse_fn_ptr");
+    mvfn.stop_ptr   = sym_value(syms, "__stop___multiverse_fn_ptr");
+    mvcs.start_ptr  = sym_value(syms, "__start___multiverse_callsite_ptr");
+    mvcs.stop_ptr   = sym_value(syms, "__stop___multiverse_callsite_ptr");
+
+    // Remove claimed relocs (Regenerate on trim)
+    GElf_Rela rela;
     gelf_getshdr(reloc_scn, &shdr);
     auto d = elf_getdata(reloc_scn, nullptr);
-
-    GElf_Rela rela;
     for (size_t i=0; i < d->d_size / shdr.sh_entsize; i++) {
         gelf_getrela(d, i, &rela);
         auto claims = 0u;
         claims += mvvar.probe_rela(&rela);
         claims += mvfn.probe_rela(&rela);
         claims += mvcs.probe_rela(&rela);
-        claims += mvtext.probe_rela(&rela);
         claims += mvdata.probe_rela(&rela);
         if (claims == 0)
             rela_other.push_back(rela);
-    }
-
-    GElf_Sym sym;
-    Elf_Data * d2 = elf_getdata(symtab_scn, nullptr);
-    gelf_getshdr(symtab_scn, &shdr);
-    shsymtab = shdr.sh_link;
-    for (size_t i=0; i < d2->d_size / shdr.sh_entsize; i++) {
-        gelf_getsym(d2, i, &sym);
-        if (mvcs.inside(sym.st_value))
-            mvcs.add_sym(sym);
-        else if (mvvar.inside(sym.st_value))
-            mvvar.add_sym(sym);
-        else if (mvfn.inside(sym.st_value))
-            mvfn.add_sym(sym);
-        else if (mvtext.inside(sym.st_value))
-            mvtext.add_sym(sym);
-        else if (mvdata.inside(sym.st_value))
-            mvdata.add_sym(sym);
-        else if (data.inside(sym.st_value))
-            data.add_sym(sym);
-        else
-            syms_other.push_back(sym);
     }
 }
 
@@ -126,16 +126,6 @@ void Bintail::read_info_cs(Elf_Scn *scn) {
 }
 
 void Bintail::update_relocs_sym() {
-    vector<GElf_Sym>* svv[] = { 
-        &syms_other,
-        &data.syms,
-        &mvvar.syms,
-        &mvdata.syms,
-        &mvfn.syms,
-        &mvcs.syms, 
-        &mvtext.syms,
-    };
-
     vector<GElf_Rela>* rvv[] = { 
         &data.relocs,
         &mvvar.relocs,
@@ -175,13 +165,11 @@ void Bintail::update_relocs_sym() {
 
     // SYMS
     i = 0;
-    cnt = 0;
-    for (auto v : svv) 
-        for (auto s : *v) {
-            if (!gelf_update_sym(d2, i++, &s))
-                cout << "Error: gelf_update_sym() "
-                    << elf_errmsg(elf_errno()) << endl;
-        }
+    for (auto s : syms) {
+        if (!gelf_update_sym(d2, i++, &s.sym))
+            cout << "Error: gelf_update_sym() "
+                << elf_errmsg(elf_errno()) << endl;
+    }
 
     assert(sizeof(GElf_Sym) == sym_shdr.sh_entsize);
     sym_shdr.sh_size = i * sizeof(GElf_Sym);
@@ -304,55 +292,10 @@ void Bintail::trim() {
         mvcs_sz += e->make_info(buf+mvcs_sz, &mvcs, vaddr+mvcs_sz);
     }
 
-    // Symbols
-    // stop is first after shdr.sh_size
-    // mvvar > mvdata > mvfn > mvcs
-    auto var_start   = mvvar.get_sym(shsymtab, "__start___multiverse_var_"s).value();
-    auto var_stop    = mvdata.get_sym(shsymtab, "__stop___multiverse_var_"s).value();
-    auto var_ary     = mvvar.get_sym(shsymtab, "__multiverse_var_ary_"s).value();
-    auto fn_start     = mvfn.get_sym(shsymtab, "__start___multiverse_fn_"s).value();
-    auto fn_stop      = mvcs.get_sym(shsymtab, "__stop___multiverse_fn_"s).value();
-    auto fn_ary       = mvfn.get_sym(shsymtab, "__multiverse_fn_ary_"s).value();
-    auto cs_start     = mvcs.get_sym(shsymtab, "__start___multiverse_callsite_"s).value();
-    auto cs_stop = find_if(syms_other.begin(), syms_other.end(), [this](auto& sym) {
-            auto symname = elf_strptr(e, shsymtab, sym.st_name);
-            return "__stop___multiverse_callsite_"s == symname;
-            }).base();
-    auto cs_ary       = mvcs.get_sym(shsymtab, "__multiverse_callsite_ary_"s).value();
-    auto var_stop_ptr = data.get_sym(shsymtab, "__stop___multiverse_var_ptr"s).value();
-    auto fn_stop_ptr  = data.get_sym(shsymtab, "__stop___multiverse_fn_ptr"s).value();
-    auto cs_stop_ptr  = data.get_sym(shsymtab, "__stop___multiverse_callsite_ptr"s).value();
-
-    // - // Find matching reloc
-    // - // stop is first after shdr.sh_size
-    // - // mvvar > mvdata > mvfn > mvcs
-    // - auto rvar_stop = mvdata.get_rela(var_stop->st_value).value();
-    // - auto rfar_stop = mvcs.get_rela(fn_stop->st_value).value();
-    // - auto rcar_stop = find_if(rela_other.begin(), rela_other.end(),
-    // -         [cs_stop](auto& rela) {
-    // -             return cs_stop->st_value == static_cast<uint64_t>(rela.r_addend);
-    // -         }).base();
-
-    var_stop->st_value = var_start->st_value+mvvar_sz-sizeof(mv_info_var);
-    fn_stop->st_value = fn_start->st_value+mvfn_sz-sizeof(mv_info_fn);
-    cs_stop->st_value = cs_start->st_value+mvcs_sz-sizeof(mv_info_callsite);
-
-    var_ary->st_size = mvvar_sz;
-    fn_ary->st_size = mvfn_sz;
-    cs_ary->st_size = mvcs_sz;
-
-    // ToDo(Felix): Link sym & reloc
-    data.set_data_ptr(var_stop_ptr->st_value, var_stop->st_value);
-    // - rvar_stop->r_addend = var_stop->st_value;
-    data.set_data_ptr(fn_stop_ptr->st_value, fn_stop->st_value);
-    // - rfar_stop->r_addend = fn_stop->st_value;
-    data.set_data_ptr(cs_stop_ptr->st_value, cs_stop->st_value);
-    // - rcar_stop->r_addend = cs_stop->st_value;
-
-    mvvar.set_size(mvvar_sz);
-    mvfn.set_size(mvfn_sz);
+    mvvar.mark_boundry(&data, mvvar_sz);
+    mvfn.mark_boundry(&data, mvfn_sz);
+    mvcs.mark_boundry(&data, mvcs_sz);
     mvdata.set_size(mvdata_sz);
-    mvcs.set_size(mvcs_sz);
 
     update_relocs_sym();
     dynamic.write();
@@ -370,26 +313,23 @@ void Bintail::write() {
 }
 
 void Bintail::print_sym() {
-#define PRINT_SYM(S) \
-    cout << ANSI_COLOR_YELLOW #S ":\n" ANSI_COLOR_RESET; \
-    S.print_sym(shsymtab);
-
-    PRINT_SYM(mvcs);
-    PRINT_SYM(mvfn);
-    PRINT_SYM(mvvar);
-    PRINT_SYM(mvtext);
-    PRINT_SYM(mvdata);
-
-    cout << ANSI_COLOR_RED "\nSym other:\n" ANSI_COLOR_RESET; 
-    for (auto& sym : syms_other) {
-        cout << "\t" << setw(34) << sym.st_name << hex
-             << " type=" << GELF_ST_TYPE(sym.st_info)
-             << " bind=" << GELF_ST_BIND(sym.st_info) << " "
-             << sym.st_other << "\t" /* Symbol visibility */
-             << sym.st_value << "\t" /* Symbol value */
-             << sym.st_size   << "\t" /* Symbol size */
+    cout << ANSI_COLOR_YELLOW "\nSyms:\n" ANSI_COLOR_RESET; 
+    for (auto& sym : syms) {
+        cout << "\t" << setw(34) << sym.name << hex
+             << " type=" << GELF_ST_TYPE(sym.sym.st_info)
+             << " bind=" << GELF_ST_BIND(sym.sym.st_info) << " "
+             << sym.sym.st_other << "\t" /* Symbol visibility */
+             << sym.sym.st_value << "\t" /* Symbol value */
+             << sym.sym.st_size   << "\t" /* Symbol size */
              << endl;
     }
+    cout << ANSI_COLOR_YELLOW "\nboundry ptr:" ANSI_COLOR_RESET << hex
+         << "\n\tmvvar.start_ptr=0x" << mvvar.start_ptr
+         << "\n\tmvvar.stop_ptr=0x" << mvvar.stop_ptr
+         << "\n\tmvfn.start_ptr=0x" << mvfn.start_ptr
+         << "\n\tmvfn.stop_ptr=0x" << mvfn.stop_ptr
+         << "\n\tmvcs.start_ptr=0x" << mvcs.start_ptr
+         << "\n\tmvcs.stop_ptr=0x" << mvcs.stop_ptr << "\n";
 }
 
 void Bintail::print_reloc() {

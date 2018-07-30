@@ -22,6 +22,8 @@ class MVFn;
 class MVPP;
 class MVData;
 
+const GElf_Rela make_rela(uint64_t source, uint64_t target);
+
 class Section {
 public:
     Section() :sz{0} {}
@@ -34,22 +36,16 @@ public:
     void set_data_int(uint64_t addr, int value);
     void set_data_ptr(uint64_t addr, uint64_t value);
     void print(size_t elem_sz);
-    void print_sym(size_t shsymtab);
     bool inside(uint64_t addr);
     void set_size(uint64_t nsz);
-
     std::optional<GElf_Rela*> get_rela(uint64_t vaddr);
-    std::optional<GElf_Sym*> get_sym(size_t sym_ndx, std::string symbol);
-
-    void add_sym(GElf_Sym Sym);
-    bool probe_rela(GElf_Rela *rela);
+    virtual bool probe_rela(GElf_Rela *rela);
 
     size_t ndx()   { return elf_ndxscn(scn); }
     size_t size()  { return sz; }
     std::byte* dirty_buf();
 
     std::vector<GElf_Rela> relocs;
-    std::vector<GElf_Sym> syms;
     Elf_Scn * scn;
 protected:
     Elf * elf;
@@ -62,15 +58,12 @@ template <typename MVInfo>
 class MVSection : public Section {
 public:
     std::unique_ptr<std::vector<MVInfo>> read(Elf_Scn *scn);
+    bool probe_rela(GElf_Rela *rela);
+    void mark_boundry(Section* data, size_t size);
+
+    uint64_t start_ptr;
+    uint64_t stop_ptr;
 private:
-    GElf_Sym s_start;
-    GElf_Sym s_start_ptr;
-    GElf_Sym s_stop;
-    GElf_Sym s_stop_ptr;
-
-    GElf_Rela r_start_ptr;
-    GElf_Rela r_stop_ptr;
-
     void add_data(MVData* );
 };
 
@@ -90,6 +83,29 @@ MVSection<MVInfo>::read(Elf_Scn *scn) {
     return v;
 }
 
+template <typename MVInfo>
+bool MVSection<MVInfo>::probe_rela(GElf_Rela *rela) {
+    if (rela->r_offset == start_ptr || rela->r_offset == stop_ptr)
+        return true;
+    return Section::probe_rela(rela);
+}
+
+template <typename MVInfo>
+void MVSection<MVInfo>::mark_boundry(Section* data, size_t size) {
+    assert(data->inside(start_ptr));
+    assert(data->inside(stop_ptr));
+
+    GElf_Shdr shdr;
+    gelf_getshdr(scn, &shdr);
+
+    data->set_data_ptr(start_ptr, shdr.sh_addr);
+    data->set_data_ptr(stop_ptr, shdr.sh_addr+size);
+
+    relocs.push_back(make_rela(start_ptr, shdr.sh_addr));
+    relocs.push_back(make_rela(stop_ptr, shdr.sh_addr+size));
+
+    set_size(size);
+}
 //-----------------------------------------------------------
 
 class DataSection : public Section {
@@ -121,6 +137,11 @@ private:
 struct sec {
     Elf_Scn *scn;
     GElf_Shdr shdr;
+    std::string name;
+};
+
+struct symbol {
+    GElf_Sym sym;
     std::string name;
 };
 
@@ -172,7 +193,7 @@ public:
     std::vector<std::unique_ptr<MVPP>> pps;
 
     std::vector<GElf_Rela> rela_other;
-    std::vector<GElf_Sym>  syms_other;
+    std::vector<symbol>  syms;
 private:
     /* Elf file */
     int fd;
@@ -181,7 +202,6 @@ private:
     Elf_Scn * reloc_scn;
     Elf_Scn * symtab_scn;
 
-    size_t shsymtab;
     size_t shstrndx;
     std::vector<struct sec> secs;
 };

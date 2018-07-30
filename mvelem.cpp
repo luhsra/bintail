@@ -10,7 +10,7 @@ using namespace std;
 #include "mvelem.h"
 #include "bintail.h"
 
-static const GElf_Rela make_rela(uint64_t source, uint64_t target) {
+const GElf_Rela make_rela(uint64_t source, uint64_t target) {
     GElf_Rela rela;
     rela.r_addend = target;
     rela.r_info = R_X86_64_RELATIVE;
