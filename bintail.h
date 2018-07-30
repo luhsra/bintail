@@ -27,7 +27,6 @@ public:
     Section() :sz{0} {}
 
     void load(Elf * elf, Elf_Scn * s);
-
     std::string get_string(uint64_t addr);
     uint8_t* get_func_loc(uint64_t addr);
     void* get_data_loc(uint64_t addr);

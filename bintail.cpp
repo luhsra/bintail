@@ -12,15 +12,13 @@
 #include <regex>
 
 #include "bintail.h"
-#include "mvpp.h"
+#include "mvelem.h"
 
 using namespace std;
 
 void Bintail::load() {
     Elf_Scn *scn = nullptr;
     GElf_Shdr shdr;
-
-    /* find mv sections */
     while((scn = elf_nextscn(e, scn)) != nullptr) {
         struct sec s;
         gelf_getshdr(scn, &shdr);
@@ -29,6 +27,7 @@ void Bintail::load() {
         s.name = elf_strptr(e, shstrndx, shdr.sh_name);
         secs.push_back(s);
     }
+
     for (const auto& sec : secs) {
         if (sec.name == "__multiverse_var_")
             mvvar.load(e, sec.scn);

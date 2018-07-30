@@ -9,7 +9,7 @@ CXXFLAGS+=-MT $@ -MMD -MP -MF $(DEPDIR)/$*.Td
 LDFLAGS=-g
 LDLIBS=-lelf
 
-SRCS=bintail.cpp main.cpp mvpp.cpp mvscn.cpp mvvar.cpp
+SRCS=bintail.cpp main.cpp mvscn.cpp mvelem.cpp
 OBJS=$(subst .cpp,.o,$(SRCS))
 
 all: bintail

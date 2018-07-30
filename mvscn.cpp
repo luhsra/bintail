@@ -10,8 +10,7 @@
 #include <gsl/gsl>
 
 #include "bintail.h"
-#include "mvvar.h"
-#include "mvpp.h"
+#include "mvelem.h"
 
 using namespace std;
 
