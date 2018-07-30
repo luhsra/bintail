@@ -26,7 +26,6 @@ MVText::MVText(std::byte *buf, size_t size, uint64_t vaddr) {
 
 size_t MVText::make_info(std::byte *buf, Section* scn, uint64_t vaddr) {
     copy(instr.cbegin(), instr.cend(), buf);
-
     // Adjust relocations
     for (auto& r : scn->relocs) {
         uint64_t orig_target = r.r_addend;

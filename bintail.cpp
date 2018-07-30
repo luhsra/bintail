@@ -216,7 +216,6 @@ void Bintail::link_pp_fn() {
         for (auto& fn : fns) {
             if (fn->location() != pp->function_body )
                 continue;
-
             fn->add_pp(pp.get());
             pp->set_fn(fn.get());
         }
@@ -273,7 +272,7 @@ void Bintail::trim() {
     uint64_t vaddr;
     uint64_t dvaddr;
 
-    buf = static_cast<byte*>(elf_getdata(mvvar.scn, nullptr)->d_buf);
+    buf = mvvar.dirty_buf();
     gelf_getshdr(mvvar.scn, &shdr);
     vaddr = shdr.sh_addr;
     for (auto& e:vars) {
@@ -282,8 +281,8 @@ void Bintail::trim() {
         mvvar_sz += e->make_info(buf+mvvar_sz, &mvvar, vaddr+mvvar_sz);
     }
 
-    buf = static_cast<byte*>(elf_getdata(mvfn.scn, nullptr)->d_buf);
-    dbuf = static_cast<byte*>(elf_getdata(mvdata.scn, nullptr)->d_buf);
+    buf = mvfn.dirty_buf();
+    dbuf = mvdata.dirty_buf();
     gelf_getshdr(mvfn.scn, &shdr);
     vaddr = shdr.sh_addr;
     gelf_getshdr(mvdata.scn, &shdr);
@@ -296,7 +295,7 @@ void Bintail::trim() {
         mvfn_sz += e->make_info(buf+mvfn_sz, &mvfn, vaddr+mvfn_sz);
     }
 
-    buf = static_cast<byte*>(elf_getdata(mvcs.scn, nullptr)->d_buf);
+    buf = mvcs.dirty_buf();
     gelf_getshdr(mvcs.scn, &shdr);
     vaddr = shdr.sh_addr;
     for (auto& e:pps) {
@@ -324,15 +323,15 @@ void Bintail::trim() {
     auto fn_stop_ptr  = data.get_sym(shsymtab, "__stop___multiverse_fn_ptr"s).value();
     auto cs_stop_ptr  = data.get_sym(shsymtab, "__stop___multiverse_callsite_ptr"s).value();
 
-    // Find matching reloc
-    // stop is first after shdr.sh_size
-    // mvvar > mvdata > mvfn > mvcs
-    auto rvar_stop = mvdata.get_rela(var_stop->st_value).value();
-    auto rfar_stop = mvcs.get_rela(fn_stop->st_value).value();
-    auto rcar_stop = find_if(rela_other.begin(), rela_other.end(),
-            [cs_stop](auto& rela) {
-                return cs_stop->st_value == static_cast<uint64_t>(rela.r_addend);
-            }).base();
+    // - // Find matching reloc
+    // - // stop is first after shdr.sh_size
+    // - // mvvar > mvdata > mvfn > mvcs
+    // - auto rvar_stop = mvdata.get_rela(var_stop->st_value).value();
+    // - auto rfar_stop = mvcs.get_rela(fn_stop->st_value).value();
+    // - auto rcar_stop = find_if(rela_other.begin(), rela_other.end(),
+    // -         [cs_stop](auto& rela) {
+    // -             return cs_stop->st_value == static_cast<uint64_t>(rela.r_addend);
+    // -         }).base();
 
     var_stop->st_value = var_start->st_value+mvvar_sz-sizeof(mv_info_var);
     fn_stop->st_value = fn_start->st_value+mvfn_sz-sizeof(mv_info_fn);
@@ -344,11 +343,11 @@ void Bintail::trim() {
 
     // ToDo(Felix): Link sym & reloc
     data.set_data_ptr(var_stop_ptr->st_value, var_stop->st_value);
-    rvar_stop->r_addend = var_stop->st_value;
+    // - rvar_stop->r_addend = var_stop->st_value;
     data.set_data_ptr(fn_stop_ptr->st_value, fn_stop->st_value);
-    rfar_stop->r_addend = fn_stop->st_value;
+    // - rfar_stop->r_addend = fn_stop->st_value;
     data.set_data_ptr(cs_stop_ptr->st_value, cs_stop->st_value);
-    rcar_stop->r_addend = cs_stop->st_value;
+    // - rcar_stop->r_addend = cs_stop->st_value;
 
     mvvar.set_size(mvvar_sz);
     mvfn.set_size(mvfn_sz);

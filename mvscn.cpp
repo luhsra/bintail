@@ -82,6 +82,12 @@ void Dynamic::write() {
 }
 
 //------------------Section------------------------------------
+std::byte* Section::dirty_buf() {
+    auto d = elf_getdata(scn, nullptr);
+    elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
+    return static_cast<byte*>(d->d_buf);
+}
+
 bool Section::probe_rela(GElf_Rela *rela) {
     auto claim = false;
     if ((claim = inside(rela->r_offset)))

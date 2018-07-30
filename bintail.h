@@ -46,6 +46,7 @@ public:
 
     size_t ndx()   { return elf_ndxscn(scn); }
     size_t size()  { return sz; }
+    std::byte* dirty_buf();
 
     std::vector<GElf_Rela> relocs;
     std::vector<GElf_Sym> syms;
