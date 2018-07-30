@@ -123,7 +123,6 @@ optional<GElf_Rela*> Section::get_rela(uint64_t vaddr) {
         return {};
     else
         return r.base();
-
 }
 
 uint64_t Section::get_data_offset(uint64_t addr) {
@@ -140,7 +139,6 @@ string Section::get_string(uint64_t addr) {
     auto str = ""s;
     auto offset = get_data_offset(addr);
     auto d = elf_getdata(scn, nullptr);
-
     auto start = offset - d->d_off;
     const char * name = (char*)d->d_buf+start;
     str += name;
@@ -150,7 +148,6 @@ string Section::get_string(uint64_t addr) {
 bool Section::inside(uint64_t addr) {
     GElf_Shdr shdr;
     gelf_getshdr(scn, &shdr);
-
     bool not_above = addr < shdr.sh_addr + shdr.sh_size;
     bool not_below = addr >= shdr.sh_addr;
     return not_above && not_below;
@@ -163,14 +160,10 @@ bool Section::inside(uint64_t addr) {
 uint8_t* Section::get_func_loc(uint64_t addr) {
     auto offset = get_data_offset(addr);
     auto d = elf_getdata(scn, nullptr);
-
     auto start = offset - d->d_off;
     auto buf = static_cast<uint8_t*>(d->d_buf);
     assert(start < d->d_size);
     return static_cast<uint8_t*>(buf+start);
-
-    assert(false);
-    return nullptr;
 }
 
 void* Section::get_data_loc(uint64_t addr) {
@@ -184,10 +177,8 @@ uint64_t Section::get_value(uint64_t addr) {
 void Section::set_data_int(uint64_t addr, int value) {
     auto offset = get_data_offset(addr);
     auto d = elf_getdata(scn, nullptr);
-
     auto vptr = (int*)((uint8_t*)d->d_buf + offset); 
     *vptr = value;
-
     elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
 }
 

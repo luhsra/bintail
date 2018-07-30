@@ -153,9 +153,7 @@ public:
     void print_reloc();
     void print_sym();
     void print_dyn();
-
-    /* Display hex view of raw multiverse sections */
-    void print_mv_sections();
+    void print_vars();
 
     /* Display mv_info_* structs in __multiverse_* section */
     void print();
@@ -168,9 +166,6 @@ public:
     void change(std::string change_str);
     void apply(std::string apply_str);
 
-    void link_pp_fn();
-    void add_fns();
-    void print_vars();
 
     void read_info_var(Elf_Scn *scn);
     void read_info_fn(Elf_Scn *scn);

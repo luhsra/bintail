@@ -22,6 +22,31 @@ static uint64_t sym_value(vector<struct symbol> &syms, const char* name) {
             }).base()->sym.st_value;
 }
 
+Bintail::Bintail(string filename) {
+    /**
+     * init libelf state
+     */ 
+    if (elf_version(EV_CURRENT) == EV_NONE)
+        errx(1, "libelf init failed");
+    if ((fd = open(filename.c_str(), O_RDWR)) == -1) 
+        errx(1, "open %s failed. %s", filename.c_str(), strerror(errno));
+    if ((e = elf_begin(fd, ELF_C_RDWR, NULL)) == nullptr)
+        errx(1, "elf_begin RDWR failed.");
+    gelf_getehdr(e, &ehdr);
+    elf_getshdrstrndx(e, &shstrndx);
+
+    /*-------------------------------------------------------------------------
+     * Manual ELF file layout, remove for smaller file.
+     * ToDo(felix): Adjust phdr section after auto re-layout
+     *-----------------------------------------------------------------------*/
+    elf_flagelf(e, ELF_C_SET, ELF_F_LAYOUT);
+}
+
+Bintail::~Bintail() {
+    elf_end(e);
+    close(fd);
+}
+
 void Bintail::load() {
     Elf_Scn *scn = nullptr;
     GElf_Shdr shdr;
@@ -61,8 +86,29 @@ void Bintail::load() {
     read_info_var(mvvar.scn);
     read_info_fn(mvfn.scn);
     read_info_cs(mvcs.scn);
-    add_fns();
-    link_pp_fn();
+
+    /**
+     * find var & save ptr to it
+     *    add fn to var.functions_head
+     */
+    for (auto& var: vars) {
+        var->check_fns(fns);
+    }
+
+    /**
+     * For all callsites:
+     * 1. Find function
+     * 2. Create patchpoint
+     * 3. Append pp to fn ll
+     */
+    for (auto& pp : pps) {
+        for (auto& fn : fns) {
+            if (fn->location() != pp->function_body )
+                continue;
+            fn->add_pp(pp.get());
+            pp->set_fn(fn.get());
+        }
+    }
 
     GElf_Sym sym;
     Elf_Data * d2 = elf_getdata(symtab_scn, nullptr);
@@ -183,33 +229,6 @@ void Bintail::update_relocs_sym() {
     elf_flagshdr(symtab_scn, ELF_C_SET, ELF_F_DIRTY);
 }
 
-void Bintail::add_fns() {
-    /**
-     * find var & save ptr to it
-     *    add fn to var.functions_head
-     */
-    for (auto& var: vars) {
-        var->check_fns(fns);
-    }
-}
-
-/**
- * For all callsites:
- * 1. Find function
- * 2. Create patchpoint
- * 3. Append pp to fn ll
- */
-void Bintail::link_pp_fn() {
-    for (auto& pp : pps) {
-        for (auto& fn : fns) {
-            if (fn->location() != pp->function_body )
-                continue;
-            fn->add_pp(pp.get());
-            pp->set_fn(fn.get());
-        }
-    }
-}
-
 void Bintail::change(string change_str) {
     string var_name;
     int value;
@@ -312,6 +331,9 @@ void Bintail::write() {
         errx(1, "elf_update(write) failed.");
 }
 
+/*
+ * PRINTING
+ */
 void Bintail::print_sym() {
     cout << ANSI_COLOR_YELLOW "\nSyms:\n" ANSI_COLOR_RESET; 
     for (auto& sym : syms) {
@@ -363,29 +385,4 @@ void Bintail::print_dyn() {
 void Bintail::print() {
     for (auto& var : vars)
         var->print(&rodata, &text, &mvtext);
-}
-
-Bintail::Bintail(string filename) {
-    /**
-     * init libelf state
-     */ 
-    if (elf_version(EV_CURRENT) == EV_NONE)
-        errx(1, "libelf init failed");
-    if ((fd = open(filename.c_str(), O_RDWR)) == -1) 
-        errx(1, "open %s failed. %s", filename.c_str(), strerror(errno));
-    if ((e = elf_begin(fd, ELF_C_RDWR, NULL)) == nullptr)
-        errx(1, "elf_begin RDWR failed.");
-    gelf_getehdr(e, &ehdr);
-    elf_getshdrstrndx(e, &shstrndx);
-
-    /*-------------------------------------------------------------------------
-     * Manual ELF file layout, remove for smaller file.
-     * ToDo(felix): Adjust phdr section after auto re-layout
-     *-----------------------------------------------------------------------*/
-    elf_flagelf(e, ELF_C_SET, ELF_F_LAYOUT);
-}
-
-Bintail::~Bintail() {
-    elf_end(e);
-    close(fd);
 }
