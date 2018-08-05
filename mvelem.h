@@ -73,7 +73,7 @@ struct mv_info_mvfn {
 
 class MVmvfn : public MVData {
 public:
-    MVmvfn(struct mv_info_mvfn& _mvfn, Section* data, Section* text);
+    MVmvfn(struct mv_info_mvfn& _mvfn, DataSection* data, TextSection* text);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
     size_t make_info_ass(std::byte* buf, Section* scn, uint64_t vaddr);
     void set_info_assigns(uint64_t vaddr);
@@ -112,16 +112,17 @@ struct mv_info_fn {
 
 class MVFn : public MVData {
 public:
-    MVFn(struct mv_info_fn& _fn, Section* data, Section* text);
+    MVFn(struct mv_info_fn& _fn, DataSection* data, TextSection* text);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
-    void print(Section* rodata, Section* text, Section* mvtext);
+    void print(Section* rodata, Section* text, TextSection* mvtext);
     void check_var(MVVar* var);
     void add_pp(MVPP* pp);
     uint64_t location();
-    void apply(Section* text, Section* mvtext);
+    void apply(Section* text, TextSection* mvtext);
     bool is_fixed();
-    size_t make_mvdata(std::byte* buf, Section* mvdata, uint64_t vaddr);
+    size_t make_mvdata(std::byte* buf, DataSection* mvdata, uint64_t vaddr);
     void set_mvfn_vaddr(uint64_t vaddr);
+    void add_mvfn_entries(std::set<uint64_t> &mvfn_imp_addrs);
 
     struct mv_info_fn fn;
     bool frozen;
@@ -162,11 +163,11 @@ class MVVar : public MVData {
 public:
     MVVar(struct mv_info_var _var, Section* rodata, Section* data);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
-    void print(Section* rodata, Section* text, Section* mvtext);
+    void print(Section* rodata, Section* text, TextSection* mvtext);
     void check_fns(std::vector<std::unique_ptr<MVFn>>& fns);
     void link_fn(MVFn* fn);
     void set_value(int v, Section* data);
-    void apply(Section* text, Section* mvtext);
+    void apply(Section* text, TextSection* mvtext);
     uint64_t location();
 
     std::string& name() { return _name; }
@@ -207,9 +208,9 @@ struct mv_patchpoint {
 class MVPP : public MVData {
 public:
     MVPP(MVFn* fn);
-    MVPP(struct mv_info_callsite& cs, Section* text, Section* mvtext);
+    MVPP(struct mv_info_callsite& cs, Section* text, TextSection* mvtext);
     bool invalid();
-    void print(Section* text, Section* mvtext);
+    void print(Section* text, TextSection* mvtext);
     void set_fn(MVFn* fn);
 
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
@@ -217,7 +218,7 @@ public:
     /* ret callee */
     uint64_t decode_callsite(struct mv_info_callsite& cs, Section* text);
 
-    void patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* mvtext);
+    void patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, TextSection* mvtext);
     void patchpoint_revert();
     void patchpoint_size(void **from, void** to);
 

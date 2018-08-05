@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <set>
 #include <iomanip>
 #include <memory>
 #include <err.h>
@@ -38,6 +39,7 @@ Bintail::Bintail(string filename) {
     /*-------------------------------------------------------------------------
      * Manual ELF file layout, remove for smaller file.
      * ToDo(felix): Adjust phdr section after auto re-layout
+     * see man pages: manual -> set offsets manualy (ehdr,shdr,phdr)
      *-----------------------------------------------------------------------*/
     elf_flagelf(e, ELF_C_SET, ELF_F_LAYOUT);
 }
@@ -294,13 +296,16 @@ void Bintail::trim() {
     vaddr = shdr.sh_addr;
     gelf_getshdr(mvdata.scn, &shdr);
     dvaddr = shdr.sh_addr;
+    set<uint64_t> mvfn_imp_addrs;
     for (auto& e:fns) {
         if (e->is_fixed())
             continue;
+        e->add_mvfn_entries(mvfn_imp_addrs);
         e->set_mvfn_vaddr(dvaddr + mvdata_sz);
         mvdata_sz += e->make_mvdata(dbuf+mvdata_sz, &mvdata, dvaddr+mvdata_sz);
         mvfn_sz += e->make_info(buf+mvfn_sz, &mvfn, vaddr+mvfn_sz);
     }
+    mvtext.trim(&mvfn_imp_addrs);
 
     buf = mvcs.dirty_buf();
     gelf_getshdr(mvcs.scn, &shdr);

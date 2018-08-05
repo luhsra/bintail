@@ -108,8 +108,9 @@ void MVmvfn::decode_mvfn_body(struct mv_info_mvfn *info, uint8_t * op) {
 }
 
 
-MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, Section* mvdata, Section* mvtext) {
+MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, DataSection* mvdata, TextSection* mvtext) {
     mvfn = _mvfn;
+    mvtext->add_entry(mvfn.function_body);
     decode_mvfn_body(&mvfn, mvtext->get_func_loc(mvfn.function_body));
 
     auto assign_array = static_cast<struct mv_info_assignment*>
@@ -194,7 +195,7 @@ void MVmvfn::check_var(MVVar* var, MVFn* fn) {
 }
 
 //---------------------MVFn----------------------------------------------------
-void MVFn::apply(Section* text, Section* mvtext) {
+void MVFn::apply(Section* text, TextSection* mvtext) {
     for (auto& e : mvfns) {
         if (e->active() && e->frozen()) {
             for (auto& p : pps) {
@@ -202,6 +203,12 @@ void MVFn::apply(Section* text, Section* mvtext) {
             }
             frozen = true;
         }
+    }
+}
+
+void MVFn::add_mvfn_entries(std::set<uint64_t> &mvfn_imp_addrs) {
+    for (auto &mvfn : mvfns) {
+        mvfn_imp_addrs.insert(mvfn->location());
     }
 }
 
@@ -224,7 +231,7 @@ size_t MVFn::make_info(byte* buf, Section* sec, uint64_t vaddr) {
 }
 
 
-size_t MVFn::make_mvdata(std::byte* buf, Section* mvdata, uint64_t vaddr) {
+size_t MVFn::make_mvdata(std::byte* buf, DataSection* mvdata, uint64_t vaddr) {
     auto esz = 0ul;
     /*
      *        v-esz                                           v-asz
@@ -254,7 +261,7 @@ uint64_t MVFn::location() {
     return fn.function_body;
 }
 
-MVFn::MVFn(struct mv_info_fn& _fn, Section* mvdata, Section* mvtext)
+MVFn::MVFn(struct mv_info_fn& _fn, DataSection* mvdata, TextSection* mvtext)
     :frozen{false} {
     fn = _fn;
 
@@ -274,7 +281,7 @@ void MVFn::check_var(MVVar* var) {
         mvfn->check_var(var, this);
 }
 
-void MVFn::print(Section* rodata, Section* text, Section* mvtext) {
+void MVFn::print(Section* rodata, Section* text, TextSection* mvtext) {
     if (active == fn.function_body)
         cout << " -> ";
     else 
@@ -306,7 +313,7 @@ MVVar::MVVar(struct mv_info_var _var, Section* rodata, Section* data)
     _value -= (_value >> b) << b;
 }
 
-void MVVar::print(Section* rodata, Section* text, Section* mvtext) {
+void MVVar::print(Section* rodata, Section* text, TextSection* mvtext) {
     cout << "Var: " << rodata->get_string(var.name)
         << "@:0x" << location() << "\n";
     for (auto& fn : fns)
@@ -344,7 +351,7 @@ void MVVar::check_fns(vector<unique_ptr<MVFn>>& fns) {
         fn->check_var(this);
 }
 
-void MVVar::apply(Section* text, Section* mvtext) {
+void MVVar::apply(Section* text, TextSection* mvtext) {
     frozen = true;
     for (auto& e : fns)
         e->apply(text, mvtext);
@@ -360,7 +367,7 @@ static int location_len(mv_info_patchpoint_type type) {
 }
 
 //---------------------MVPP----------------------------------------------------
-MVPP::MVPP(struct mv_info_callsite& cs, Section* text, Section* mvtext) {
+MVPP::MVPP(struct mv_info_callsite& cs, Section* text, TextSection* mvtext) {
     Section* txt;
     if (text->inside(cs.call_label))
         txt = text;
@@ -398,7 +405,7 @@ void MVPP::set_fn(MVFn* fn) {
     _fn = fn;
 }
 
-void MVPP::print(Section* text, Section* mvtext) {
+void MVPP::print(Section* text, TextSection* mvtext) {
     Section* txt;
     auto type = pp.type == PP_TYPE_INVALID ? "invalid" :
         pp.type == PP_TYPE_X86_CALL ? "call(x86)" :
@@ -440,7 +447,7 @@ uint64_t MVPP::decode_callsite(struct mv_info_callsite& cs, Section* text) {
     return callee;
 }
 
-void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* mvtext) {
+void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, TextSection* mvtext) {
     Section* txt;
     if (text->inside(pp.location))
         txt = text;

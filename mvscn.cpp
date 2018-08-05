@@ -7,11 +7,25 @@
 #include <string.h>
 #include <cassert>
 #include <memory>
+#include <set>
 
 #include "bintail.h"
 #include "mvelem.h"
 
 using namespace std;
+
+//------------------DataSection--------------------------------
+void TextSection::add_entry(uint64_t entry) {
+    assert(inside(entry));
+    entries.insert(entry);
+}
+
+void TextSection::trim(std::set<uint64_t> *active_entries) {
+    //print entries not in active entries
+    auto i = mismatch(entries.begin(), entries.end(), active_entries->begin());
+    cout << "Mismatch 0x" << hex << *i.first << "\n";
+    cout << "   ----  0x" << hex << *i.second << "\n";
+}
 
 //------------------DataSection--------------------------------
 void DataSection::add_data(MVData* md) {

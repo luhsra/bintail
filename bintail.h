@@ -2,6 +2,7 @@
 #define __BINTAIL_H
 
 #include <vector>
+#include <set>
 #include <memory>
 #include <optional>
 #include <map>
@@ -118,10 +119,10 @@ private:
 
 class TextSection : public Section {
 public:
-    void add_data(MVData* );
-    void write();
+    void add_entry(uint64_t entry);
+    void trim(std::set<uint64_t> *active_entries);
 private:
-    std::vector<MVData*> ds;
+    std::set<uint64_t> entries;
 };
 
 class Dynamic : public Section {
