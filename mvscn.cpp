@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <exception>
+#include <string>
 #include <string.h>
 #include <cassert>
 #include <memory>
@@ -95,6 +96,11 @@ void Dynamic::write() {
 }
 
 //------------------Section------------------------------------
+const std::byte* Section::buf() {
+    auto d = elf_getdata(scn, nullptr);
+    return static_cast<byte*>(d->d_buf);
+}
+
 std::byte* Section::dirty_buf() {
     auto d = elf_getdata(scn, nullptr);
     elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
@@ -139,24 +145,17 @@ optional<GElf_Rela*> Section::get_rela(uint64_t vaddr) {
         return r.base();
 }
 
-uint64_t Section::get_data_offset(uint64_t addr) {
+uint64_t Section::get_offset(uint64_t addr) {
     GElf_Shdr shdr;
     gelf_getshdr(scn, &shdr);
-
     auto offset = addr - shdr.sh_addr;
-    if (offset < 0 || offset >= shdr.sh_size)
-        throw range_error("Address not inside section - "s + __func__);
+    assert(offset < 0 || offset >= sz);
     return offset;
 }
 
 string Section::get_string(uint64_t addr) {
-    auto str = ""s;
-    auto offset = get_data_offset(addr);
-    auto d = elf_getdata(scn, nullptr);
-    auto start = offset - d->d_off;
-    const char * name = (char*)d->d_buf+start;
-    str += name;
-    return str;
+    auto offset = get_offset(addr);
+    return {reinterpret_cast<const char*>(buf()) + offset};
 }
 
 bool Section::inside(uint64_t addr) {
@@ -172,7 +171,7 @@ bool Section::inside(uint64_t addr) {
  * ToDo(Felix): Use something else
  */
 uint8_t* Section::get_func_loc(uint64_t addr) {
-    auto offset = get_data_offset(addr);
+    auto offset = get_offset(addr);
     auto d = elf_getdata(scn, nullptr);
     auto start = offset - d->d_off;
     auto buf = static_cast<uint8_t*>(d->d_buf);
@@ -189,7 +188,7 @@ uint64_t Section::get_value(uint64_t addr) {
 }
 
 void Section::set_data_int(uint64_t addr, int value) {
-    auto offset = get_data_offset(addr);
+    auto offset = get_offset(addr);
     auto d = elf_getdata(scn, nullptr);
     auto vptr = (int*)((uint8_t*)d->d_buf + offset); 
     *vptr = value;
@@ -197,7 +196,7 @@ void Section::set_data_int(uint64_t addr, int value) {
 }
 
 void Section::set_data_ptr(uint64_t addr, uint64_t value) {
-    auto offset = get_data_offset(addr);
+    auto offset = get_offset(addr);
     auto d = elf_getdata(scn, nullptr);
 
     auto vptr = (uint64_t*)((uint8_t*)d->d_buf + offset); 

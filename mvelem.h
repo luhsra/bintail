@@ -112,9 +112,9 @@ struct mv_info_fn {
 
 class MVFn : public MVData {
 public:
-    MVFn(struct mv_info_fn& _fn, DataSection* data, TextSection* text);
+    MVFn(struct mv_info_fn& _fn, DataSection* data, TextSection* text, Section* rodata);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
-    void print(Section* rodata, Section* text, TextSection* mvtext);
+    void print(Section* text, TextSection* mvtext);
     void check_var(MVVar* var);
     void add_pp(MVPP* pp);
     uint64_t location();
@@ -131,6 +131,7 @@ public:
 private:
     std::vector<MVPP*> pps;
     std::vector<std::unique_ptr<MVmvfn>> mvfns;
+    std::string name;
 };
 
 //-----------------------------------------------------------------------------
@@ -163,7 +164,7 @@ class MVVar : public MVData {
 public:
     MVVar(struct mv_info_var _var, Section* rodata, Section* data);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
-    void print(Section* rodata, Section* text, TextSection* mvtext);
+    void print(Section* text, TextSection* mvtext);
     void check_fns(std::vector<std::unique_ptr<MVFn>>& fns);
     void link_fn(MVFn* fn);
     void set_value(int v, Section* data);

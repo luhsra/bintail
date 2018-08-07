@@ -261,9 +261,10 @@ uint64_t MVFn::location() {
     return fn.function_body;
 }
 
-MVFn::MVFn(struct mv_info_fn& _fn, DataSection* mvdata, TextSection* mvtext)
+MVFn::MVFn(struct mv_info_fn& _fn, DataSection* mvdata, TextSection* mvtext, Section* rodata)
     :frozen{false} {
     fn = _fn;
+    name = rodata->get_string(fn.name);
 
     if (fn.n_mv_functions == 0)
         return;
@@ -281,31 +282,26 @@ void MVFn::check_var(MVVar* var) {
         mvfn->check_var(var, this);
 }
 
-void MVFn::print(Section* rodata, Section* text, TextSection* mvtext) {
-    if (active == fn.function_body)
-        cout << " -> ";
-    else 
-        cout << "    ";
-    
-    cout << rodata->get_string(fn.name) << " @0x" << hex << fn.function_body
-        << "  -  mvfn[] @0x" << fn.mv_functions<< "\n";
+void MVFn::print(Section* text, TextSection* mvtext) {
+    cout << (active == fn.function_body ? " -> " : "    ")
+         << name << " @0x" << hex << fn.function_body
+         << "  -  mvfn[] @0x" << fn.mv_functions<< "\n";
 
     for (auto &mvfn : mvfns) {
         auto mact = active == mvfn->location();
-
         mvfn->print(mact);
     }
     
     cout << "\tpatchpoints:\n";
     for (auto& pp : pps)
         pp->print(text, mvtext);
-    printf("\n");
+    cout << "\n";
 }
 
 //---------------------MVVar---------------------------------------------------
 MVVar::MVVar(struct mv_info_var _var, Section* rodata, Section* data)
         :frozen{false}, var{_var} {
-    _name += rodata->get_string(var.name);
+    _name = rodata->get_string(var.name);
     _value = data->get_value(var.variable_location);
 
     // Discard bytes > width
@@ -313,11 +309,10 @@ MVVar::MVVar(struct mv_info_var _var, Section* rodata, Section* data)
     _value -= (_value >> b) << b;
 }
 
-void MVVar::print(Section* rodata, Section* text, TextSection* mvtext) {
-    cout << "Var: " << rodata->get_string(var.name)
-        << "@:0x" << location() << "\n";
+void MVVar::print(Section* text, TextSection* mvtext) {
+    cout << "Var: " << _name << "@:0x" << location() << "\n";
     for (auto& fn : fns)
-        fn->print(rodata, text, mvtext);
+        fn->print(text, mvtext);
 }
 
 size_t MVVar::make_info(byte* buf, Section* sec, uint64_t vaddr) {

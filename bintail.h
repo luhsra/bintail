@@ -42,15 +42,15 @@ public:
     std::optional<GElf_Rela*> get_rela(uint64_t vaddr);
     virtual bool probe_rela(GElf_Rela *rela);
 
-    size_t ndx()   { return elf_ndxscn(scn); }
-    size_t size()  { return sz; }
+    constexpr size_t size()  { return sz; }
     std::byte* dirty_buf();
+    const std::byte* buf();
 
     std::vector<GElf_Rela> relocs;
     Elf_Scn * scn;
 protected:
     Elf * elf;
-    uint64_t get_data_offset(uint64_t addr);
+    uint64_t get_offset(uint64_t addr);
     size_t sz;
     uint64_t max_size;
 };
@@ -58,7 +58,7 @@ protected:
 template <typename MVInfo>
 class MVSection : public Section {
 public:
-    std::unique_ptr<std::vector<MVInfo>> read(Elf_Scn *scn);
+    std::unique_ptr<std::vector<MVInfo>> read();
     bool probe_rela(GElf_Rela *rela);
     void mark_boundry(Section* data, size_t size);
 
@@ -71,7 +71,7 @@ private:
 //------------------MVSection--------------------------------
 template <typename MVInfo>
 std::unique_ptr<std::vector<MVInfo>>
-MVSection<MVInfo>::read(Elf_Scn *scn) {
+MVSection<MVInfo>::read() {
     auto v = std::make_unique<std::vector<MVInfo>>();
     GElf_Shdr shdr;
     gelf_getshdr(scn, &shdr);
@@ -81,7 +81,7 @@ MVSection<MVInfo>::read(Elf_Scn *scn) {
         auto e = *((MVInfo*)buf + i);
         v->push_back(e);
     }
-    return v;
+    return std::move(v);
 }
 
 template <typename MVInfo>
@@ -159,18 +159,12 @@ public:
     /* Display mv_info_* structs in __multiverse_* section */
     void print();
 
-    void load();
     void write();
     void trim();
     void update_relocs_sym();
 
     void change(std::string change_str);
     void apply(std::string apply_str);
-
-
-    void read_info_var(Elf_Scn *scn);
-    void read_info_fn(Elf_Scn *scn);
-    void read_info_cs(Elf_Scn *scn);
 
     Section rodata;
     Section data;

@@ -23,10 +23,19 @@ static uint64_t sym_value(vector<struct symbol> &syms, const char* name) {
             }).base()->sym.st_value;
 }
 
+static Elf_Scn * get_scn(vector<struct sec> &secs, const char* name) {
+    return find_if(secs.cbegin(), secs.cend(), [name](auto& s) {
+            return s.name == name;
+            }).base()->scn;
+}
+
+Bintail::~Bintail() {
+    elf_end(e);
+    close(fd);
+}
+
 Bintail::Bintail(string filename) {
-    /**
-     * init libelf state
-     */ 
+    /* init libelf state */ 
     if (elf_version(EV_CURRENT) == EV_NONE)
         errx(1, "libelf init failed");
     if ((fd = open(filename.c_str(), O_RDWR)) == -1) 
@@ -42,14 +51,7 @@ Bintail::Bintail(string filename) {
      * see man pages: manual -> set offsets manualy (ehdr,shdr,phdr)
      *-----------------------------------------------------------------------*/
     elf_flagelf(e, ELF_C_SET, ELF_F_LAYOUT);
-}
 
-Bintail::~Bintail() {
-    elf_end(e);
-    close(fd);
-}
-
-void Bintail::load() {
     Elf_Scn *scn = nullptr;
     GElf_Shdr shdr;
     while((scn = elf_nextscn(e, scn)) != nullptr) {
@@ -61,48 +63,54 @@ void Bintail::load() {
         secs.push_back(s);
     }
 
-    for (const auto& sec : secs) {
-        if (sec.name == "__multiverse_var_")
-            mvvar.load(e, sec.scn);
-        else if (sec.name == "__multiverse_fn_")
-            mvfn.load(e, sec.scn);
-        else if (sec.name == "__multiverse_callsite_")
-            mvcs.load(e, sec.scn);
-        else if (sec.name == "__multiverse_data_")
-            mvdata.load(e, sec.scn);
-        else if (sec.name == "__multiverse_text_")
-            mvtext.load(e, sec.scn);
-        else if (sec.name == ".rodata")
-            rodata.load(e, sec.scn);
-        else if (sec.name == ".data")
-            data.load(e, sec.scn);
-        else if (sec.name == ".text")
-            text.load(e, sec.scn);
-        else if (sec.name == ".symtab")
-            symtab_scn = sec.scn;
-        else if (sec.name == ".dynamic")
-            dynamic.load(e, sec.scn);
-        else if (sec.shdr.sh_type == SHT_RELA && sec.shdr.sh_info == 0)
+    for (const auto& sec : secs)
+        if (sec.shdr.sh_type == SHT_RELA && sec.shdr.sh_info == 0)
             reloc_scn = sec.scn;
-    }
-    read_info_var(mvvar.scn);
-    read_info_fn(mvfn.scn);
-    read_info_cs(mvcs.scn);
 
-    /**
-     * find var & save ptr to it
-     *    add fn to var.functions_head
-     */
+    symtab_scn = get_scn(secs, ".symtab");
+
+    mvvar.load  (e, get_scn(secs, "__multiverse_var_"));
+    mvfn.load   (e, get_scn(secs, "__multiverse_fn_"));
+    mvcs.load   (e, get_scn(secs, "__multiverse_callsite_"));
+    mvdata.load (e, get_scn(secs, "__multiverse_data_"));
+    mvtext.load (e, get_scn(secs, "__multiverse_text_"));
+    rodata.load (e, get_scn(secs, ".rodata"));
+    data.load   (e, get_scn(secs, ".data"));
+    text.load   (e, get_scn(secs, ".text"));
+    dynamic.load(e, get_scn(secs, ".dynamic"));
+
+    auto mvvar_infos = mvvar.read();
+    auto mvfn_infos = mvfn.read();
+    auto mvcs_infos = mvcs.read();
+
+    /* read info sections */
+    for (auto e : *mvvar_infos)
+        vars.push_back(make_unique<MVVar>(e, &rodata, &data));
+    for (auto e : *mvcs_infos)
+        pps.push_back(make_unique<MVPP>(e, &text, &mvtext));
+    for (auto e : *mvfn_infos) {
+        auto f = make_unique<MVFn>(e, &mvdata, &mvtext, &rodata);
+        auto pp = make_unique<MVPP>(f.get());
+        f->add_pp(pp.get());
+        fns.push_back(move(f));
+        pps.push_back(move(pp));
+    }
+
+    /* multiverse_init equivalent */
+    //
+    // find var & save ptr to it
+    //    add fn to var.functions_head
+    //
     for (auto& var: vars) {
         var->check_fns(fns);
     }
 
-    /**
-     * For all callsites:
-     * 1. Find function
-     * 2. Create patchpoint
-     * 3. Append pp to fn ll
-     */
+    //
+    // For all callsites:
+    // 1. Find function
+    // 2. Create patchpoint
+    // 3. Append pp to fn ll
+    //
     for (auto& pp : pps) {
         for (auto& fn : fns) {
             if (fn->location() != pp->function_body )
@@ -112,6 +120,7 @@ void Bintail::load() {
         }
     }
 
+    /* Keep symbols the same (refs to index) */
     GElf_Sym sym;
     Elf_Data * d2 = elf_getdata(symtab_scn, nullptr);
     gelf_getshdr(symtab_scn, &shdr);
@@ -142,34 +151,6 @@ void Bintail::load() {
         claims += mvdata.probe_rela(&rela);
         if (claims == 0)
             rela_other.push_back(rela);
-    }
-}
-
-void Bintail::read_info_var(Elf_Scn *scn) {
-    auto infos = mvvar.read(scn);
-    for (auto e : *infos) {
-        auto var = make_unique<MVVar>(e, &rodata, &data);
-        vars.push_back(move(var));
-    }
-}
-
-void Bintail::read_info_fn(Elf_Scn *scn) {
-    auto infos = mvfn.read(scn);
-    for (auto e : *infos) {
-        auto f = make_unique<MVFn>(e, &mvdata, &mvtext);
-        auto pp = make_unique<MVPP>(f.get());
-        f->add_pp(pp.get());
-
-        fns.push_back(move(f));
-        pps.push_back(move(pp));
-    }
-}
-
-void Bintail::read_info_cs(Elf_Scn *scn) {
-    auto infos = mvcs.read(scn);
-    for (auto e : *infos) {
-        auto pp = make_unique<MVPP>(e, &text, &mvtext);
-        pps.push_back(move(pp));
     }
 }
 
@@ -245,7 +226,6 @@ void Bintail::change(string change_str) {
             e->set_value(value, &data);
     }
 }
-
 
 void Bintail::apply(string change_str) {
     string var_name;
@@ -389,5 +369,5 @@ void Bintail::print_dyn() {
 
 void Bintail::print() {
     for (auto& var : vars)
-        var->print(&rodata, &text, &mvtext);
+        var->print(&text, &mvtext);
 }

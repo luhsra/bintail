@@ -76,11 +76,9 @@ int main(int argc, char *argv[]) {
     }
 
     Bintail bintail{filename};
-    bintail.load();
 
     for (auto& e : changes)
         bintail.change(e);
-
     for (auto& e : apply)
         bintail.apply(e);
     
@@ -99,4 +97,3 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
-
