@@ -23,5 +23,5 @@ test_flags() {
 samples=( `ls ../samples/*.c | sed 's/\.c$//'` )
 echo "Samples: $samples"
 
-test_flags "-a config_first -w -t" $samples
-test_flags "-s config_first=0 -w -t" $samples
+test_flags "-a config_first -w -g -t" $samples
+test_flags "-s config_first=0 -w -g -t" $samples

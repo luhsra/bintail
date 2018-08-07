@@ -16,19 +16,6 @@
 using namespace std;
 
 //------------------DataSection--------------------------------
-void TextSection::add_entry(uint64_t entry) {
-    assert(inside(entry));
-    entries.insert(entry);
-}
-
-void TextSection::trim(std::set<uint64_t> *active_entries) {
-    //print entries not in active entries
-    auto i = mismatch(entries.begin(), entries.end(), active_entries->begin());
-    cout << "Mismatch 0x" << hex << *i.first << "\n";
-    cout << "   ----  0x" << hex << *i.second << "\n";
-}
-
-//------------------DataSection--------------------------------
 void DataSection::add_data(MVData* md) {
     ds.push_back(md);
 }
@@ -74,8 +61,7 @@ void Dynamic::print() {
 
 GElf_Dyn* Dynamic::get_dyn(int64_t tag) {
     auto it = find_if(dyns.begin(), dyns.end(), [&tag](auto& d) {
-            return d->d_tag == tag;
-            });
+            return d->d_tag == tag; });
     if (it != dyns.end())
         return (*it).get();
     else
@@ -96,6 +82,14 @@ void Dynamic::write() {
 }
 
 //------------------Section------------------------------------
+void Section::add_rela(uint64_t source, uint64_t target) {
+    GElf_Rela rela;
+    rela.r_addend = target;
+    rela.r_info = R_X86_64_RELATIVE;
+    rela.r_offset = source;
+    relocs.push_back(rela);
+}
+
 const std::byte* Section::buf() {
     auto d = elf_getdata(scn, nullptr);
     return static_cast<byte*>(d->d_buf);

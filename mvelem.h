@@ -29,10 +29,7 @@ private:
 
 //-----------------------------------------------------------------------------
 struct mv_info_assignment {
-    union {
-        uint64_t location;
-        int info; // Runtime link
-    } variable;
+    uint64_t location;
     uint32_t lower_bound;
     uint32_t upper_bound;
 };
@@ -41,10 +38,11 @@ class MVassign : public MVData {
 public:
     MVassign(struct mv_info_assignment& _assign);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
-    uint64_t location();
-    bool active();
+    bool is_active();
     void link_var(MVVar* _var);
     void print();
+
+    constexpr uint64_t location() { return assign.location; }
     MVVar* var;
 private:
     struct mv_info_assignment assign;
@@ -60,27 +58,25 @@ typedef enum {
 } mvfn_type_t;
 
 struct mv_info_mvfn {
-    // static
-    uint64_t function_body;    // A pointer to the mvfn's function body
+    uint64_t function_body;      // A pointer to the mvfn's function body
     unsigned int n_assignments;  // The mvfn's variable assignments
-    uint64_t assignments;      // Array of mv_info_assignment
+    uint64_t assignments;        // Array of mv_info_assignment
 
     // runtime
     int type;                    // This is be interpreted as mv_type_t
-                                 // (declared as integer to ensure correct size)
     uint32_t constant;
 };
 
 class MVmvfn : public MVData {
 public:
-    MVmvfn(struct mv_info_mvfn& _mvfn, DataSection* data, TextSection* text);
+    MVmvfn(struct mv_info_mvfn& _mvfn, DataSection* data, Section* text);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
     size_t make_info_ass(std::byte* buf, Section* scn, uint64_t vaddr);
     void set_info_assigns(uint64_t vaddr);
     void check_var(MVVar* var, MVFn* fn);
     void print(bool active);
     bool active();
-    bool frozen();
+    bool assign_vars_frozen();
     /**
       @brief decode mvfn function body
 
@@ -91,7 +87,7 @@ public:
     */
     void decode_mvfn_body(struct mv_info_mvfn *info, uint8_t * op);
 
-    uint64_t location() { return mvfn.function_body; }
+    constexpr uint64_t location() { return mvfn.function_body; }
     struct mv_info_mvfn mvfn;
 private:
     std::vector<std::unique_ptr<MVassign>> assigns;
@@ -99,30 +95,30 @@ private:
 
 //-----------------------------------------------------------------------------
 struct mv_info_fn {
-    // static
-    uint64_t name;             // Functions's symbol name
-    uint64_t function_body;    // A pointer to the original (generic) function body
+    uint64_t name;               // Functions's symbol name
+    uint64_t function_body;      // A pointer to the original (generic) function body
     unsigned int n_mv_functions; // Specialized multiverse variant functions of this function
-    uint64_t mv_functions;     // Array of mv_info_mvfn
+    uint64_t mv_functions;       // Array of mv_info_mvfn
 
     // runtime
-    struct mv_patchpoint *patchpoints_head;  // Patchpoints as linked list TODO: arch-specific
-    struct mv_info_mvfn *active_mvfn; // The currently active mvfn
+    struct mv_patchpoint *patchpoints_head; // Patchpoints as linked list
+    struct mv_info_mvfn *active_mvfn;       // The currently active mvfn
 };
 
 class MVFn : public MVData {
 public:
-    MVFn(struct mv_info_fn& _fn, DataSection* data, TextSection* text, Section* rodata);
+    MVFn(struct mv_info_fn& _fn, DataSection* data, Section* text, Section* rodata);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
-    void print(Section* text, TextSection* mvtext);
+    void print();
     void check_var(MVVar* var);
     void add_pp(MVPP* pp);
-    uint64_t location();
-    void apply(Section* text, TextSection* mvtext);
-    bool is_fixed();
+    void apply(Section* text, Section* mvtext, bool guard);
     size_t make_mvdata(std::byte* buf, DataSection* mvdata, uint64_t vaddr);
     void set_mvfn_vaddr(uint64_t vaddr);
     void add_mvfn_entries(std::set<uint64_t> &mvfn_imp_addrs);
+
+    constexpr bool is_fixed() { return frozen; }
+    constexpr uint64_t location() { return fn.function_body; }
 
     struct mv_info_fn fn;
     bool frozen;
@@ -164,11 +160,11 @@ class MVVar : public MVData {
 public:
     MVVar(struct mv_info_var _var, Section* rodata, Section* data);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
-    void print(Section* text, TextSection* mvtext);
+    void print();
     void check_fns(std::vector<std::unique_ptr<MVFn>>& fns);
     void link_fn(MVFn* fn);
     void set_value(int v, Section* data);
-    void apply(Section* text, TextSection* mvtext);
+    void apply(Section* text, Section* mvtext, bool guard);
     uint64_t location();
 
     std::string& name() { return _name; }
@@ -184,7 +180,6 @@ private:
 
 //-----------------------------------------------------------------------------
 struct mv_info_callsite {
-    // static
     uint64_t function_body;
     uint64_t call_label;
 };
@@ -201,26 +196,18 @@ struct mv_patchpoint {
     uint64_t* function;
     uint64_t location;                // == callsite call_label
     mv_info_patchpoint_type type;
-
-    // Here we swap in the code, we overwrite
-    unsigned char swapspace[6];
+    unsigned char swapspace[6]; // Here we swap in the code, we overwrite
 };
 
 class MVPP : public MVData {
 public:
     MVPP(MVFn* fn);
-    MVPP(struct mv_info_callsite& cs, Section* text, TextSection* mvtext);
-    bool invalid();
-    void print(Section* text, TextSection* mvtext);
+    MVPP(struct mv_info_callsite& cs, Section* text, Section* mvtext);
+    void print();
     void set_fn(MVFn* fn);
-
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
-
-    /* ret callee */
-    uint64_t decode_callsite(struct mv_info_callsite& cs, Section* text);
-
-    void patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, TextSection* mvtext);
-    void patchpoint_revert();
+    uint64_t decode_callsite(struct mv_info_callsite& cs, Section* text); // ret callee
+    void patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* mvtext);
     void patchpoint_size(void **from, void** to);
 
     struct mv_patchpoint pp;

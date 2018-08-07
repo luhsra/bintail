@@ -213,36 +213,28 @@ void Bintail::update_relocs_sym() {
 }
 
 void Bintail::change(string change_str) {
-    string var_name;
-    int value;
     smatch m;
-
     regex_search(change_str, m, regex(R"((\w+)=(\d+))"));
-    var_name = m.str(1);
-    value = stoi(m.str(2));
-
-    for (auto& e : vars) {
+    auto var_name = m.str(1);
+    auto value = stoi(m.str(2));
+    for (auto& e : vars)
         if (var_name == e->name())
             e->set_value(value, &data);
-    }
 }
 
-void Bintail::apply(string change_str) {
-    string var_name;
-    smatch m;
-
-    regex_search(change_str, m, regex(R"((\w+))"));
-    var_name = m.str(1);
-
-    for (auto& e : vars) {
-        if (var_name == e->name())
-            e->apply(&text, &mvtext);
-    }
-}
-
-/*
- * TODO: mvtext
+/**
+ * Remove variance
+ *  guard - replace mvtext entry of unused with 0xc3
  */
+void Bintail::apply(string change_str, bool guard) {
+    smatch m;
+    regex_search(change_str, m, regex(R"((\w+))"));
+    auto var_name = m.str(1);
+    for (auto& e : vars)
+        if (var_name == e->name())
+            e->apply(&text, &mvtext, guard);
+}
+
 void Bintail::trim() {
     // Remove relocs from multiverse sections
     mvvar.relocs.clear();
@@ -261,6 +253,7 @@ void Bintail::trim() {
     uint64_t vaddr;
     uint64_t dvaddr;
 
+    /* multiverse vars */
     buf = mvvar.dirty_buf();
     gelf_getshdr(mvvar.scn, &shdr);
     vaddr = shdr.sh_addr;
@@ -270,6 +263,7 @@ void Bintail::trim() {
         mvvar_sz += e->make_info(buf+mvvar_sz, &mvvar, vaddr+mvvar_sz);
     }
 
+    /* multiverse fns & mvdata */
     buf = mvfn.dirty_buf();
     dbuf = mvdata.dirty_buf();
     gelf_getshdr(mvfn.scn, &shdr);
@@ -285,8 +279,8 @@ void Bintail::trim() {
         mvdata_sz += e->make_mvdata(dbuf+mvdata_sz, &mvdata, dvaddr+mvdata_sz);
         mvfn_sz += e->make_info(buf+mvfn_sz, &mvfn, vaddr+mvfn_sz);
     }
-    mvtext.trim(&mvfn_imp_addrs);
 
+    /* multiverse callsites */
     buf = mvcs.dirty_buf();
     gelf_getshdr(mvcs.scn, &shdr);
     vaddr = shdr.sh_addr;
@@ -307,7 +301,7 @@ void Bintail::trim() {
 
 // See: libelf by example
 void Bintail::write() {
-    elf_fill(0xc3c3c3c3);
+    elf_fill(0xcccccccc);
     if (elf_update(e, ELF_C_NULL) < 0) {
         cout << elf_errmsg(elf_errno());
         errx(1, "elf_update(null) failed.");
@@ -369,5 +363,5 @@ void Bintail::print_dyn() {
 
 void Bintail::print() {
     for (auto& var : vars)
-        var->print(&text, &mvtext);
+        var->print();
 }

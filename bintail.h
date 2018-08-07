@@ -41,6 +41,7 @@ public:
     void set_size(uint64_t nsz);
     std::optional<GElf_Rela*> get_rela(uint64_t vaddr);
     virtual bool probe_rela(GElf_Rela *rela);
+    void add_rela(uint64_t source, uint64_t target);
 
     constexpr size_t size()  { return sz; }
     std::byte* dirty_buf();
@@ -102,8 +103,8 @@ void MVSection<MVInfo>::mark_boundry(Section* data, size_t size) {
     data->set_data_ptr(start_ptr, shdr.sh_addr);
     data->set_data_ptr(stop_ptr, shdr.sh_addr+size);
 
-    relocs.push_back(make_rela(start_ptr, shdr.sh_addr));
-    relocs.push_back(make_rela(stop_ptr, shdr.sh_addr+size));
+    add_rela(start_ptr, shdr.sh_addr);
+    add_rela(stop_ptr, shdr.sh_addr+size);
 
     set_size(size);
 }
@@ -115,14 +116,6 @@ public:
     void write();
 private:
     std::vector<MVData*> ds;
-};
-
-class TextSection : public Section {
-public:
-    void add_entry(uint64_t entry);
-    void trim(std::set<uint64_t> *active_entries);
-private:
-    std::set<uint64_t> entries;
 };
 
 class Dynamic : public Section {
@@ -151,20 +144,18 @@ public:
     Bintail(std::string filename);
     ~Bintail();
 
+    void print(); // Display mv_info_* structs in __multiverse_* section
     void print_reloc();
     void print_sym();
     void print_dyn();
     void print_vars();
-
-    /* Display mv_info_* structs in __multiverse_* section */
-    void print();
 
     void write();
     void trim();
     void update_relocs_sym();
 
     void change(std::string change_str);
-    void apply(std::string apply_str);
+    void apply(std::string apply_str, bool guard);
 
     Section rodata;
     Section data;
@@ -176,7 +167,7 @@ public:
     MVSection<struct mv_info_var> mvvar;
     MVSection<struct mv_info_callsite> mvcs;
     DataSection mvdata;
-    TextSection mvtext;
+    Section mvtext;
 
     std::vector<std::shared_ptr<MVVar>> vars;
     std::vector<std::unique_ptr<MVFn>> fns;

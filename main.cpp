@@ -29,6 +29,7 @@ int main(int argc, char *argv[]) {
     auto display = false;
     auto write = false;
     auto trim = false;
+    auto guard = false;
     auto dyn = false;
     auto sym = false;
     auto mvreloc = false;
@@ -36,7 +37,7 @@ int main(int argc, char *argv[]) {
     vector<string> apply;
     
     int opt;
-    while ((opt = getopt(argc, argv, "a:df:hlrs:twy")) != -1) {
+    while ((opt = getopt(argc, argv, "a:df:hglrs:twy")) != -1) {
         switch (opt) {
         case 'a':
             apply.push_back(optarg);
@@ -49,6 +50,9 @@ int main(int argc, char *argv[]) {
             break;
         case 'h':
             help();
+            break;
+        case 'g':
+            guard = true;
             break;
         case 'l':
             dyn = true;
@@ -80,7 +84,7 @@ int main(int argc, char *argv[]) {
     for (auto& e : changes)
         bintail.change(e);
     for (auto& e : apply)
-        bintail.apply(e);
+        bintail.apply(e, guard);
     
     if (display)
         bintail.print();
