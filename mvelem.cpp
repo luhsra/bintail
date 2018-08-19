@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <cstdlib>
+#include <regex>
 using namespace std;
 
 #include "string.h"
@@ -47,6 +48,12 @@ void MVassign::link_var(MVVar* _var) {
     var = _var;
 }
 
+bool MVassign::check_sym(const string &sym_match) {
+    smatch m;
+    regex pat { var->name() + "_" + (var->value() ? "true" : "false")};
+    return regex_search(sym_match, m, pat);
+}
+
 bool MVassign::is_active() {
     auto low = assign.lower_bound;
     auto high = assign.upper_bound;
@@ -62,45 +69,35 @@ void MVassign::print() {
 }
 
 //---------------------MVmvfn--------------------------------------------------
-static int is_ret(uint8_t* addr) {
+static bool is_ret(const uint8_t* addr) {
     //    c3: retq
     // f3 c3: repz retq
     return addr[0] == 0xc3 || (addr[0] == 0xf3 && addr[1] == 0xc3);
 }
 
-void MVmvfn::decode_mvfn_body(struct mv_info_mvfn *info, uint8_t * op) {
-    // 31 c0: xor    %eax,%eax
-    //    c3: retq
-    if ((op[0] == 0x31 && op[1] == 0xc0) && is_ret(op + 2)) {
-        // multiverse_os_print("eax = 0\n");
-        info->type = MVFN_TYPE_CONSTANT;
-        info->constant = 0;
-    } else if (op[0] == 0xb8 && is_ret(op + 5)) {
-        info->type = MVFN_TYPE_CONSTANT;
-        info->constant = *(uint32_t *)(op +1);
-        // multiverse_os_print("eax = %d\n", info->constant);
-    } else if (is_ret(op)) {
-        // multiverse_os_print("NOP\n");
-        info->type = MVFN_TYPE_NOP;
-    } else if (op[0] == 0xfa && is_ret(op + 1)) {
-        info->type = MVFN_TYPE_CLI;
-    } else if (op[0] == 0xfb&& is_ret(op + 1)) {
-        info->type = MVFN_TYPE_STI;
-    } else {
-        info->type = MVFN_TYPE_NONE;
-    }
-}
-
 MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, DataSection* mvdata, Section* mvtext) {
     mvfn = _mvfn;
-    decode_mvfn_body(&mvfn, mvtext->get_func_loc(mvfn.function_body));
-
-    auto assign_array = static_cast<struct mv_info_assignment*>
-        (mvdata->get_data_loc(mvfn.assignments));
-    for (size_t x = 0; x < mvfn.n_assignments; x++) {
-        auto assign = make_unique<MVassign>(assign_array[x]);
-        assigns.push_back(move(assign));
+    auto op = reinterpret_cast<const uint8_t*>(mvtext->buf(mvfn.function_body));
+    // 31 c0: xor    %eax,%eax
+    if ((op[0] == 0x31 && op[1] == 0xc0) && is_ret(op + 2)) {
+        mvfn.type = MVFN_TYPE_CONSTANT;
+        mvfn.constant = 0;
+    } else if (op[0] == 0xb8 && is_ret(op + 5)) {
+        mvfn.type = MVFN_TYPE_CONSTANT;
+        mvfn.constant = *(uint32_t *)(op +1);
+    } else if (is_ret(op)) {
+        mvfn.type = MVFN_TYPE_NOP;
+    } else if (op[0] == 0xfa && is_ret(op + 1)) {
+        mvfn.type = MVFN_TYPE_CLI;
+    } else if (op[0] == 0xfb&& is_ret(op + 1)) {
+        mvfn.type = MVFN_TYPE_STI;
+    } else {
+        mvfn.type = MVFN_TYPE_NONE;
     }
+    auto assign_infos = reinterpret_cast<const struct mv_info_assignment*>
+        (mvdata->buf(mvfn.assignments));
+    for_each(assign_infos, assign_infos+mvfn.n_assignments, [&](auto ainfo)
+            { assigns.push_back(make_unique<MVassign>(ainfo)); });
 }
 
 /* make mvfn & mvassings */
@@ -147,7 +144,7 @@ void MVmvfn::print(bool cur) {
            mvfn.type == MVFN_TYPE_STI ? "sti" : "unknown";
     cout << (active() ? ANSI_COLOR_YELLOW : "")
          << (cur ?  " -> " : "    ")
-         << "mvfn@0x" << hex << mvfn.function_body
+         << "mvfn@0x" << hex << mvfn.function_body << ":0x" << symbol.sym.st_size
          << " type=" << type
          << "  -  assignments[] @0x" << hex
          << mvfn.assignments << "\n" ANSI_COLOR_RESET;
@@ -164,6 +161,13 @@ void MVmvfn::check_var(MVVar* var, MVFn* fn) {
     }
 }
 
+void MVmvfn::probe_sym(struct symbol &sym, const string &sym_match) {
+    if (all_of(assigns.begin(), assigns.end(), [&](auto& ass)
+                { return ass->check_sym(sym_match); }))
+        symbol = sym;
+
+}
+
 //---------------------MVFn----------------------------------------------------
 void MVFn::apply(Section* text, Section* mvtext, bool guard) {
     auto pfn = find_if(mvfns.begin(), mvfns.end(), [](auto& mfn)
@@ -173,18 +177,12 @@ void MVFn::apply(Section* text, Section* mvtext, bool guard) {
     if (guard) {
         for (auto& e : mvfns)
             if (e.get() != pfn.base()->get())
-                mvtext->set_data_int(e->location(), 0xcccccccc);
-        mvtext->set_data_int(location(), 0xcccccccc); // overriden by pp
+                mvtext->fill(e->location(), byte{0xcc}, e->size());
+        mvtext->fill(location(), byte{0xcc}, symbol.sym.st_size); // overriden by pp
     }
     for (auto& p : pps) 
         p->patchpoint_apply(&(pfn->get()->mvfn), text, mvtext);
     frozen = true;
-}
-
-void MVFn::add_mvfn_entries(std::set<uint64_t> &mvfn_imp_addrs) {
-    for (auto &mvfn : mvfns) {
-        mvfn_imp_addrs.insert(mvfn->location());
-    }
 }
 
 void MVFn::set_mvfn_vaddr(uint64_t vaddr) {
@@ -231,22 +229,32 @@ MVFn::MVFn(struct mv_info_fn& _fn, DataSection* mvdata, Section* mvtext, Section
     if (fn.n_mv_functions == 0)
         return;
 
-    auto mvfn_array = static_cast<struct mv_info_mvfn*>
-        (mvdata->get_data_loc(fn.mv_functions));
-    for (size_t j = 0; j < fn.n_mv_functions; j++) {
-        auto mf = make_unique<MVmvfn>(mvfn_array[j], mvdata, mvtext);
-        mvfns.push_back(move(mf));
-    }
+    auto mvfn_array = reinterpret_cast<const struct mv_info_mvfn*>
+        (mvdata->buf(fn.mv_functions));
+    for_each(mvfn_array, mvfn_array+fn.n_mv_functions, [&](auto minfo)
+            { mvfns.push_back(make_unique<MVmvfn>(minfo, mvdata, mvtext));} );
 }
 
-void MVFn::check_var(MVVar* var) {
+void MVFn::probe_var(MVVar* var) {
     for (auto& mvfn : mvfns)
         mvfn->check_var(var, this);
 }
 
+void MVFn::probe_sym(struct symbol &sym) {
+    smatch m;
+    regex pat { "^" + name + "(\\.multiverse\\.(.+))?$" };
+    if (regex_search(sym.name, m, pat)) {
+        if (m[2].matched) // probe mvfn with part after multiverse
+            for (auto& mvfn : mvfns)
+                mvfn->probe_sym(sym, m[2].str());
+        else
+           symbol = sym;
+    }
+}
+
 void MVFn::print() {
     cout << (active == fn.function_body ? " -> " : "    ")
-         << name << " @0x" << hex << fn.function_body
+         << name << " @0x" << hex << fn.function_body << ":0x" << symbol.sym.st_size
          << "  -  mvfn[] @0x" << fn.mv_functions<< "\n";
 
     for (auto &mvfn : mvfns) {
@@ -264,11 +272,23 @@ void MVFn::print() {
 MVVar::MVVar(struct mv_info_var _var, Section* rodata, Section* data)
         :frozen{false}, var{_var} {
     _name = rodata->get_string(var.name);
-    _value = data->get_value(var.variable_location);
-
-    // Discard bytes > width
-    auto b = var.variable_width * 8;
-    _value -= (_value >> b) << b;
+    //ignores signed
+    switch (var.variable_width) {
+        case 1:
+            _value = reinterpret_cast<const uint8_t*>(data->buf(var.variable_location))[0];
+            break;
+        case 2:
+            _value = reinterpret_cast<const uint16_t*>(data->buf(var.variable_location))[0];
+            break;
+        case 4:
+            _value = reinterpret_cast<const uint32_t*>(data->buf(var.variable_location))[0];
+            break;
+        case 8:
+            _value = reinterpret_cast<const uint64_t*>(data->buf(var.variable_location))[0];
+            break;
+        default:
+            throw std::runtime_error("Unexpected variable_witdh.\n");
+    }
 }
 
 void MVVar::print() {
@@ -296,16 +316,12 @@ void MVVar::link_fn(MVFn* fn) {
 void MVVar::set_value(int v, Section* data) {
     _value = v;
     assert(var.variable_width == 4); 
-    data->set_data_int(var.variable_location, v);
+    auto b = reinterpret_cast<int32_t*>(data->dirty_buf(var.variable_location));
+    b[0] = v;
 }
 
 uint64_t MVVar::location() {
     return var.variable_location;
-}
-
-void MVVar::check_fns(vector<unique_ptr<MVFn>>& fns) {
-    for (auto& fn : fns)
-        fn->check_var(this);
 }
 
 void MVVar::apply(Section* text, Section* mvtext, bool guard) {
@@ -316,14 +332,12 @@ void MVVar::apply(Section* text, Section* mvtext, bool guard) {
 
 //---------------------MVPP---------------------------------------------------
 static int location_len(mv_info_patchpoint_type type) {
-    if (type == PP_TYPE_X86_CALL_INDIRECT) {
+    if (type == PP_TYPE_X86_CALL_INDIRECT)
         return 6;
-    } else {
+    else
         return 5;
-    }
 }
 
-//---------------------MVPP----------------------------------------------------
 MVPP::MVPP(MVFn* fn) : _fn{fn} {
     fptr = (fn->fn.n_mv_functions == 0);
     pp.type     = PP_TYPE_X86_JUMP;
@@ -360,13 +374,13 @@ void MVPP::print() {
 
 uint64_t MVPP::decode_callsite(struct mv_info_callsite& cs, Section* text) {
     pp.location = cs.call_label;
-    auto *p = text->get_func_loc(cs.call_label);
+    auto op = reinterpret_cast<const uint8_t*>(text->buf(cs.call_label));
     uint64_t callee = 0;
-    if (p[0] == 0xe8) { // normal call
-        callee = cs.call_label + *(int*)(p + 1) + 5;
+    if (op[0] == 0xe8) { // normal call
+        callee = cs.call_label + *(int*)(op + 1) + 5;
         pp.type = PP_TYPE_X86_CALL;
-    } else if (p[0] == 0xff && p[1] == 0x15) { // indirect call (function ptr)
-        callee = (uint64_t)(cs.call_label + *(int*)(p + 2) + 6);
+    } else if (op[0] == 0xff && op[1] == 0x15) { // indirect call (function ptr)
+        callee = (uint64_t)(cs.call_label + *(int*)(op + 2) + 6);
         pp.type = PP_TYPE_X86_CALL_INDIRECT;
     } else
         throw std::runtime_error("Invalid patchpoint\n");
@@ -375,52 +389,50 @@ uint64_t MVPP::decode_callsite(struct mv_info_callsite& cs, Section* text) {
 
 void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* mvtext) {
     auto txt = (text->inside(pp.location) ? text : mvtext );
-    auto location = txt->get_func_loc(pp.location);
+    auto op = reinterpret_cast<unsigned char*>(txt->dirty_buf(pp.location));
     uint32_t offset;
     switch(pp.type) {
         case PP_TYPE_X86_JUMP:
-            location[0] = 0xe9; // jmp
+            op[0] = 0xe9; // jmp
             offset = (uintptr_t)mvfn->function_body - ((uintptr_t) pp.location + 5);
-            *((uint32_t *)&location[1]) = offset;
+            *((uint32_t *)&op[1]) = offset;
             break;
         case PP_TYPE_X86_CALL:
         case PP_TYPE_X86_CALL_INDIRECT:
             // Oh, look. It has a very simple body!
             if (mvfn->type == MVFN_TYPE_NOP) {
                 if (pp.type == PP_TYPE_X86_CALL_INDIRECT) {
-                    memcpy(location, "\x66\x0F\x1F\x44\x00\x00", 6); // 6 byte NOP
+                    memcpy(op, "\x66\x0F\x1F\x44\x00\x00", 6); // 6 byte NOP
                 } else {
-                    memcpy(location, "\x0F\x1F\x44\x00\x00", 5);     // 5 byte NOP
+                    memcpy(op, "\x0F\x1F\x44\x00\x00", 5);     // 5 byte NOP
                 }
             } else if (mvfn->type == MVFN_TYPE_CONSTANT) {
-                location[0] = 0xb8; // mov $..., eax
-                *(uint32_t *)(location + 1) = mvfn->constant;
+                op[0] = 0xb8; // mov $..., eax
+                *(uint32_t *)(op + 1) = mvfn->constant;
                 if (pp.type == PP_TYPE_X86_CALL_INDIRECT)
-                    location[5] = '\x90'; // insert trailing NOP
+                    op[5] = '\x90'; // insert trailing NOP
             } else if (mvfn->type == MVFN_TYPE_CLI ||
                        mvfn->type == MVFN_TYPE_STI) {
                 if (mvfn->type == MVFN_TYPE_CLI) {
-                    location[0] = '\xfa'; // CLI
+                    op[0] = '\xfa'; // CLI
                 } else {
-                    location[0] = '\xfb'; // STI
+                    op[0] = '\xfb'; // STI
                 }
                 if (pp.type == PP_TYPE_X86_CALL_INDIRECT) {
-                    memcpy(&location[1], "\x0F\x1F\x44\x00\x00", 5); // 5 byte NOP
+                    memcpy(&op[1], "\x0F\x1F\x44\x00\x00", 5); // 5 byte NOP
                 } else {
-                    memcpy(&location[1], "\x0F\x1F\x40\x00", 4);     // 4 byte NOP
+                    memcpy(&op[1], "\x0F\x1F\x40\x00", 4);     // 4 byte NOP
                 }
             } else {
                 offset = (uintptr_t)mvfn->function_body - ((uintptr_t) pp.location + 5);
-                location[0] = 0xe8; // call
-                *((uint32_t *)&location[1]) = offset;
+                op[0] = 0xe8; // call
+                *((uint32_t *)&op[1]) = offset;
                 if (pp.type == PP_TYPE_X86_CALL_INDIRECT)
-                    location[5] = '\x90'; // insert trailing NOP
+                    op[5] = '\x90'; // insert trailing NOP
             }
             break;
         default:
-            cerr << "Could not apply patchpoint: " 
-                << hex << pp.location << endl;
-            return;
+            throw std::runtime_error("Could not apply patchpoint.");
     } 
     auto d = elf_getdata(txt->scn, nullptr);
     elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);

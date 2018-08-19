@@ -95,10 +95,18 @@ const std::byte* Section::buf() {
     return static_cast<byte*>(d->d_buf);
 }
 
+const std::byte* Section::buf(uint64_t addr) {
+    return buf()+get_offset(addr);
+}
+
 std::byte* Section::dirty_buf() {
     auto d = elf_getdata(scn, nullptr);
     elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
     return static_cast<byte*>(d->d_buf);
+}
+
+std::byte* Section::dirty_buf(uint64_t addr) {
+    return dirty_buf()+get_offset(addr);
 }
 
 bool Section::probe_rela(GElf_Rela *rela) {
@@ -160,43 +168,10 @@ bool Section::inside(uint64_t addr) {
     return not_above && not_below;
 }
 
-/**
- * get ptr into data buffer where the function is mapped
- * ToDo(Felix): Use something else
- */
-uint8_t* Section::get_func_loc(uint64_t addr) {
-    auto offset = get_offset(addr);
-    auto d = elf_getdata(scn, nullptr);
-    auto start = offset - d->d_off;
-    auto buf = static_cast<uint8_t*>(d->d_buf);
-    assert(start < d->d_size);
-    return static_cast<uint8_t*>(buf+start);
-}
-
-void* Section::get_data_loc(uint64_t addr) {
-    return get_func_loc(addr);
-}
-
-uint64_t Section::get_value(uint64_t addr) {
-    return *((uint64_t*)(get_func_loc(addr)));
-}
-
-void Section::set_data_int(uint64_t addr, int value) {
-    auto offset = get_offset(addr);
-    auto d = elf_getdata(scn, nullptr);
-    auto vptr = (int*)((uint8_t*)d->d_buf + offset); 
-    *vptr = value;
-    elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
-}
-
-void Section::set_data_ptr(uint64_t addr, uint64_t value) {
-    auto offset = get_offset(addr);
-    auto d = elf_getdata(scn, nullptr);
-
-    auto vptr = (uint64_t*)((uint8_t*)d->d_buf + offset); 
-    *vptr = value;
-
-    elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
+void Section::fill(uint64_t addr, byte value, size_t len) {
+    auto b = dirty_buf() + get_offset(addr);
+    for(auto i=0ul; i<len; i++)
+        b[i] = value;
 }
 
 void Section::set_size(uint64_t nsz) {

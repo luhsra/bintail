@@ -97,28 +97,22 @@ Bintail::Bintail(string filename) {
     }
 
     /* multiverse_init equivalent */
-    //
     // find var & save ptr to it
     //    add fn to var.functions_head
-    //
-    for (auto& var: vars) {
-        var->check_fns(fns);
-    }
+    for (auto& fn : fns)
+        for (auto& var: vars)
+            fn->probe_var(var.get());
 
-    //
-    // For all callsites:
     // 1. Find function
     // 2. Create patchpoint
     // 3. Append pp to fn ll
-    //
-    for (auto& pp : pps) {
+    for (auto& pp : pps)
         for (auto& fn : fns) {
             if (fn->location() != pp->function_body )
                 continue;
             fn->add_pp(pp.get());
             pp->set_fn(fn.get());
         }
-    }
 
     /* Keep symbols the same (refs to index) */
     GElf_Sym sym;
@@ -137,6 +131,10 @@ Bintail::Bintail(string filename) {
     mvfn.stop_ptr   = sym_value(syms, "__stop___multiverse_fn_ptr");
     mvcs.start_ptr  = sym_value(syms, "__start___multiverse_callsite_ptr");
     mvcs.stop_ptr   = sym_value(syms, "__stop___multiverse_callsite_ptr");
+
+    for (auto& sym : syms)
+        for (auto& fn : fns)
+            fn->probe_sym(sym);
 
     // Remove claimed relocs (Regenerate on trim)
     GElf_Rela rela;
@@ -270,11 +268,9 @@ void Bintail::trim() {
     vaddr = shdr.sh_addr;
     gelf_getshdr(mvdata.scn, &shdr);
     dvaddr = shdr.sh_addr;
-    set<uint64_t> mvfn_imp_addrs;
     for (auto& e:fns) {
         if (e->is_fixed())
             continue;
-        e->add_mvfn_entries(mvfn_imp_addrs);
         e->set_mvfn_vaddr(dvaddr + mvdata_sz);
         mvdata_sz += e->make_mvdata(dbuf+mvdata_sz, &mvdata, dvaddr+mvdata_sz);
         mvfn_sz += e->make_info(buf+mvfn_sz, &mvfn, vaddr+mvfn_sz);

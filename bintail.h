@@ -31,11 +31,7 @@ public:
 
     void load(Elf * elf, Elf_Scn * s);
     std::string get_string(uint64_t addr);
-    uint8_t* get_func_loc(uint64_t addr);
-    void* get_data_loc(uint64_t addr);
-    uint64_t get_value(uint64_t addr);
-    void set_data_int(uint64_t addr, int value);
-    void set_data_ptr(uint64_t addr, uint64_t value);
+    void fill(uint64_t addr, std::byte value, size_t len);
     void print(size_t elem_sz);
     bool inside(uint64_t addr);
     void set_size(uint64_t nsz);
@@ -45,7 +41,9 @@ public:
 
     constexpr size_t size()  { return sz; }
     std::byte* dirty_buf();
+    std::byte* dirty_buf(uint64_t addr);
     const std::byte* buf();
+    const std::byte* buf(uint64_t addr);
 
     std::vector<GElf_Rela> relocs;
     Elf_Scn * scn;
@@ -94,16 +92,12 @@ bool MVSection<MVInfo>::probe_rela(GElf_Rela *rela) {
 
 template <typename MVInfo>
 void MVSection<MVInfo>::mark_boundry(Section* data, size_t size) {
-    assert(data->inside(start_ptr));
-    assert(data->inside(stop_ptr));
-
     GElf_Shdr shdr;
     gelf_getshdr(scn, &shdr);
 
-    data->set_data_ptr(start_ptr, shdr.sh_addr);
-    data->set_data_ptr(stop_ptr, shdr.sh_addr+size);
-
+    reinterpret_cast<uint64_t*>(data->dirty_buf(start_ptr))[0] = shdr.sh_addr;
     add_rela(start_ptr, shdr.sh_addr);
+    reinterpret_cast<uint64_t*>(data->dirty_buf(stop_ptr))[0] = shdr.sh_addr+size;
     add_rela(stop_ptr, shdr.sh_addr+size);
 
     set_size(size);

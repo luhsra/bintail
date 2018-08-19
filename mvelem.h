@@ -39,6 +39,7 @@ public:
     MVassign(struct mv_info_assignment& _assign);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
     bool is_active();
+    bool check_sym(const std::string &sym_match);
     void link_var(MVVar* _var);
     void print();
 
@@ -49,13 +50,8 @@ private:
 };
 
 //-----------------------------------------------------------------------------
-typedef enum {
-    MVFN_TYPE_NONE,
-    MVFN_TYPE_NOP,
-    MVFN_TYPE_CONSTANT,
-    MVFN_TYPE_CLI,
-    MVFN_TYPE_STI,
-} mvfn_type_t;
+typedef enum : int { MVFN_TYPE_NONE, MVFN_TYPE_NOP, MVFN_TYPE_CONSTANT,
+    MVFN_TYPE_CLI, MVFN_TYPE_STI } mvfn_type_t;
 
 struct mv_info_mvfn {
     uint64_t function_body;      // A pointer to the mvfn's function body
@@ -63,7 +59,7 @@ struct mv_info_mvfn {
     uint64_t assignments;        // Array of mv_info_assignment
 
     // runtime
-    int type;                    // This is be interpreted as mv_type_t
+    mvfn_type_t type; 
     uint32_t constant;
 };
 
@@ -74,23 +70,23 @@ public:
     size_t make_info_ass(std::byte* buf, Section* scn, uint64_t vaddr);
     void set_info_assigns(uint64_t vaddr);
     void check_var(MVVar* var, MVFn* fn);
+    void probe_sym(struct symbol &sym, const std::string &sym_match);
     void print(bool active);
     bool active();
     bool assign_vars_frozen();
-    /**
-      @brief decode mvfn function body
 
-      If a multiverse function body does nothing, or only returns a
-      constant value, we can further optimize the patched callsites. For a
-      dummy architecture implementation, this operation can be implemented
-      as a NOP.
-    */
+    /* If a multiverse function body does nothing, or only returns a
+     * constant value, we can further optimize the patched callsites. For a
+     * dummy architecture implementation, this operation can be implemented
+     * as a NOP. */
     void decode_mvfn_body(struct mv_info_mvfn *info, uint8_t * op);
 
     constexpr uint64_t location() { return mvfn.function_body; }
+    constexpr size_t size() { return symbol.sym.st_size; }
     struct mv_info_mvfn mvfn;
 private:
     std::vector<std::unique_ptr<MVassign>> assigns;
+    struct symbol symbol;
 };
 
 //-----------------------------------------------------------------------------
@@ -110,12 +106,12 @@ public:
     MVFn(struct mv_info_fn& _fn, DataSection* data, Section* text, Section* rodata);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
     void print();
-    void check_var(MVVar* var);
+    void probe_var(MVVar* var);
+    void probe_sym(struct symbol &sym);
     void add_pp(MVPP* pp);
     void apply(Section* text, Section* mvtext, bool guard);
     size_t make_mvdata(std::byte* buf, DataSection* mvdata, uint64_t vaddr);
     void set_mvfn_vaddr(uint64_t vaddr);
-    void add_mvfn_entries(std::set<uint64_t> &mvfn_imp_addrs);
 
     constexpr bool is_fixed() { return frozen; }
     constexpr uint64_t location() { return fn.function_body; }
@@ -125,9 +121,10 @@ public:
     uint64_t active;
     uint64_t mvfn_vaddr;
 private:
-    std::vector<MVPP*> pps;
     std::vector<std::unique_ptr<MVmvfn>> mvfns;
+    std::vector<MVPP*> pps;
     std::string name;
+    struct symbol symbol;
 };
 
 //-----------------------------------------------------------------------------
@@ -161,7 +158,6 @@ public:
     MVVar(struct mv_info_var _var, Section* rodata, Section* data);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
     void print();
-    void check_fns(std::vector<std::unique_ptr<MVFn>>& fns);
     void link_fn(MVFn* fn);
     void set_value(int v, Section* data);
     void apply(Section* text, Section* mvtext, bool guard);
