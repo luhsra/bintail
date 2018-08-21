@@ -38,8 +38,11 @@ public:
     std::optional<GElf_Rela*> get_rela(uint64_t vaddr);
     virtual bool probe_rela(GElf_Rela *rela);
     void add_rela(uint64_t source, uint64_t target);
+    bool in_segment(GElf_Phdr &phdr);
+    uint64_t get_offset();
 
     constexpr size_t size()  { return sz; }
+    constexpr size_t max_sz()  { return max_size; }
     std::byte* dirty_buf();
     std::byte* dirty_buf(uint64_t addr);
     const std::byte* buf();
@@ -154,6 +157,7 @@ public:
     Section rodata;
     Section data;
     Section text;
+    Section bss;
     Dynamic dynamic;
 
     /* MV Sections */

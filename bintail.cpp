@@ -78,12 +78,35 @@ Bintail::Bintail(string filename) {
     data.load   (e, get_scn(secs, ".data"));
     text.load   (e, get_scn(secs, ".text"));
     dynamic.load(e, get_scn(secs, ".dynamic"));
+    bss.load    (e, get_scn(secs, ".bss"));
 
-    auto mvvar_infos = mvvar.read();
-    auto mvfn_infos = mvfn.read();
-    auto mvcs_infos = mvcs.read();
+    /* Get LOAD Section ending in bss */ 
+    size_t phdr_num;
+    elf_getphdrnum(e, &phdr_num);
+    GElf_Phdr phdr;
+    for (auto i=0u; i<phdr_num; i++) {
+        gelf_getphdr(e, i, &phdr);
+        if (phdr.p_type != PT_LOAD &&
+            bss.get_offset() != phdr.p_offset + phdr.p_filesz)
+            continue;
+        if ( mvvar.in_segment(phdr) && mvdata.in_segment(phdr) && 
+             mvfn.in_segment(phdr) && mvcs.in_segment(phdr))
+            break;
+    }
+    /* Get start addr */
+    auto area_end = phdr.p_offset + phdr.p_filesz;
+    auto area_start = area_end;
+    area_start = min(area_start, mvvar.get_offset());
+    area_start = min(area_start, mvdata.get_offset());
+    area_start = min(area_start, mvfn.get_offset());
+    area_start = min(area_start, mvcs.get_offset());
+    assert(area_start + mvvar.max_sz() + mvdata.max_sz() +
+           mvcs.max_sz() + mvfn.max_sz() == area_end);
 
     /* read info sections */
+    auto mvvar_infos = mvvar.read();
+    auto mvcs_infos = mvcs.read();
+    auto mvfn_infos = mvfn.read();
     for (auto e : *mvvar_infos)
         vars.push_back(make_unique<MVVar>(e, &rodata, &data));
     for (auto e : *mvcs_infos)
@@ -152,6 +175,9 @@ Bintail::Bintail(string filename) {
     }
 }
 
+/**
+ * Regenerate rela & sym table & update .dynamic info
+ */
 void Bintail::update_relocs_sym() {
     vector<GElf_Rela>* rvv[] = { 
         &data.relocs,

@@ -168,6 +168,20 @@ bool Section::inside(uint64_t addr) {
     return not_above && not_below;
 }
 
+bool Section::in_segment(GElf_Phdr &phdr) {
+    GElf_Shdr shdr;
+    gelf_getshdr(scn, &shdr);
+    bool not_above = shdr.sh_offset < phdr.p_offset + phdr.p_filesz;
+    bool not_below = shdr.sh_offset >= phdr.p_offset;
+    return not_above && not_below;
+}
+
+uint64_t Section::get_offset() {
+    GElf_Shdr shdr;
+    gelf_getshdr(scn, &shdr);
+    return shdr.sh_offset;
+}
+
 void Section::fill(uint64_t addr, byte value, size_t len) {
     auto b = dirty_buf() + get_offset(addr);
     for(auto i=0ul; i<len; i++)
