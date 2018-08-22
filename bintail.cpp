@@ -271,29 +271,26 @@ void Bintail::trim() {
     size_t mvdata_sz = 0;
     size_t mvcs_sz = 0;
 
-    GElf_Shdr shdr;
+    GElf_Shdr mvdata_shdr;
+    GElf_Shdr mvfn_shdr;
+    GElf_Shdr mvvar_shdr;
+    GElf_Shdr mvcs_shdr;
     byte* buf;
     byte* dbuf;
     uint64_t vaddr;
     uint64_t dvaddr;
 
-    /* multiverse vars */
-    buf = mvvar.dirty_buf();
-    gelf_getshdr(mvvar.scn, &shdr);
-    vaddr = shdr.sh_addr;
-    for (auto& e:vars) {
-        if (e->frozen)
-            continue;
-        mvvar_sz += e->make_info(buf+mvvar_sz, &mvvar, vaddr+mvvar_sz);
-    }
-
+    /*
+     * AREA:
+     * [ ... | mvdata | mvfn | mvvar | mvcs | .bss ]
+     */
     /* multiverse fns & mvdata */
     buf = mvfn.dirty_buf();
     dbuf = mvdata.dirty_buf();
-    gelf_getshdr(mvfn.scn, &shdr);
-    vaddr = shdr.sh_addr;
-    gelf_getshdr(mvdata.scn, &shdr);
-    dvaddr = shdr.sh_addr;
+    gelf_getshdr(mvfn.scn, &mvfn_shdr);
+    vaddr = mvfn_shdr.sh_addr;
+    gelf_getshdr(mvdata.scn, &mvdata_shdr);
+    dvaddr = mvdata_shdr.sh_addr;
     for (auto& e:fns) {
         if (e->is_fixed())
             continue;
@@ -302,10 +299,20 @@ void Bintail::trim() {
         mvfn_sz += e->make_info(buf+mvfn_sz, &mvfn, vaddr+mvfn_sz);
     }
 
+    /* multiverse vars */
+    buf = mvvar.dirty_buf();
+    gelf_getshdr(mvvar.scn, &mvvar_shdr);
+    vaddr = mvvar_shdr.sh_addr;
+    for (auto& e:vars) {
+        if (e->frozen)
+            continue;
+        mvvar_sz += e->make_info(buf+mvvar_sz, &mvvar, vaddr+mvvar_sz);
+    }
+
     /* multiverse callsites */
     buf = mvcs.dirty_buf();
-    gelf_getshdr(mvcs.scn, &shdr);
-    vaddr = shdr.sh_addr;
+    gelf_getshdr(mvcs.scn, &mvcs_shdr);
+    vaddr = mvcs_shdr.sh_addr;
     for (auto& e:pps) {
         if ( e->_fn->is_fixed() || e->pp.type == PP_TYPE_X86_JUMP)
             continue;
