@@ -83,25 +83,26 @@ Bintail::Bintail(string filename) {
     /* Get LOAD Section ending in bss */ 
     size_t phdr_num;
     elf_getphdrnum(e, &phdr_num);
-    GElf_Phdr phdr;
     for (auto i=0u; i<phdr_num; i++) {
-        gelf_getphdr(e, i, &phdr);
-        if (phdr.p_type != PT_LOAD &&
-            bss.get_offset() != phdr.p_offset + phdr.p_filesz)
+        area_phdr_ndx = i;
+        gelf_getphdr(e, i, &area_phdr);
+        if (area_phdr.p_type != PT_LOAD &&
+            bss.get_offset() != area_phdr.p_offset + area_phdr.p_filesz)
             continue;
-        if ( mvvar.in_segment(phdr) && mvdata.in_segment(phdr) && 
-             mvfn.in_segment(phdr) && mvcs.in_segment(phdr))
+        if ( mvvar.in_segment(area_phdr) && mvdata.in_segment(area_phdr) && 
+             mvfn.in_segment(area_phdr) && mvcs.in_segment(area_phdr))
             break;
     }
     /* Get start addr */
-    auto area_end = phdr.p_offset + phdr.p_filesz;
-    auto area_start = area_end;
-    area_start = min(area_start, mvvar.get_offset());
-    area_start = min(area_start, mvdata.get_offset());
-    area_start = min(area_start, mvfn.get_offset());
-    area_start = min(area_start, mvcs.get_offset());
-    assert(area_start + mvvar.max_sz() + mvdata.max_sz() +
+    auto area_end = area_phdr.p_offset + area_phdr.p_filesz;
+    area_start_offset = area_end;
+    area_start_offset = min(area_start_offset, mvvar.get_offset());
+    area_start_offset = min(area_start_offset, mvdata.get_offset());
+    area_start_offset = min(area_start_offset, mvfn.get_offset());
+    area_start_offset = min(area_start_offset, mvcs.get_offset());
+    assert(area_start_offset + mvvar.max_sz() + mvdata.max_sz() +
            mvcs.max_sz() + mvfn.max_sz() == area_end);
+    area_start_vaddr = area_phdr.p_vaddr - area_phdr.p_offset + area_start_offset;
 
     /* read info sections */
     auto mvvar_infos = mvvar.read();
@@ -276,30 +277,41 @@ void Bintail::trim() {
     GElf_Shdr mvvar_shdr;
     GElf_Shdr mvcs_shdr;
     byte* buf;
-    byte* dbuf;
     uint64_t vaddr;
-    uint64_t dvaddr;
 
     /*
      * AREA:
      * [ ... | mvdata | mvfn | mvvar | mvcs | .bss ]
      */
     /* multiverse fns & mvdata */
-    buf = mvfn.dirty_buf();
-    dbuf = mvdata.dirty_buf();
-    gelf_getshdr(mvfn.scn, &mvfn_shdr);
-    vaddr = mvfn_shdr.sh_addr;
+    auto area_ndx = 0ul;
+    mvdata.set_shdr_map(area_start_offset, area_start_vaddr, area_ndx);
+    buf = mvdata.dirty_buf();
     gelf_getshdr(mvdata.scn, &mvdata_shdr);
-    dvaddr = mvdata_shdr.sh_addr;
+    vaddr = mvdata_shdr.sh_addr;
     for (auto& e:fns) {
         if (e->is_fixed())
             continue;
-        e->set_mvfn_vaddr(dvaddr + mvdata_sz);
-        mvdata_sz += e->make_mvdata(dbuf+mvdata_sz, &mvdata, dvaddr+mvdata_sz);
+        e->set_mvfn_vaddr(vaddr + mvdata_sz);
+        mvdata_sz += e->make_mvdata(buf+mvdata_sz, &mvdata, vaddr+mvdata_sz);
+    }
+    mvdata.set_size(mvdata_sz);
+    area_ndx += mvdata_sz;
+
+    mvfn.set_shdr_map(area_start_offset, area_start_vaddr, area_ndx);
+    buf = mvfn.dirty_buf();
+    gelf_getshdr(mvfn.scn, &mvfn_shdr);
+    vaddr = mvfn_shdr.sh_addr;
+    for (auto& e:fns) {
+        if (e->is_fixed())
+            continue;
         mvfn_sz += e->make_info(buf+mvfn_sz, &mvfn, vaddr+mvfn_sz);
     }
+    mvfn.mark_boundry(&data, mvfn_sz);
+    area_ndx += mvfn_sz;
 
     /* multiverse vars */
+    mvvar.set_shdr_map(area_start_offset, area_start_vaddr, area_ndx);
     buf = mvvar.dirty_buf();
     gelf_getshdr(mvvar.scn, &mvvar_shdr);
     vaddr = mvvar_shdr.sh_addr;
@@ -308,8 +320,11 @@ void Bintail::trim() {
             continue;
         mvvar_sz += e->make_info(buf+mvvar_sz, &mvvar, vaddr+mvvar_sz);
     }
+    mvvar.mark_boundry(&data, mvvar_sz);
+    area_ndx += mvvar_sz;
 
     /* multiverse callsites */
+    mvcs.set_shdr_map(area_start_offset, area_start_vaddr, area_ndx);
     buf = mvcs.dirty_buf();
     gelf_getshdr(mvcs.scn, &mvcs_shdr);
     vaddr = mvcs_shdr.sh_addr;
@@ -318,11 +333,13 @@ void Bintail::trim() {
             continue;
         mvcs_sz += e->make_info(buf+mvcs_sz, &mvcs, vaddr+mvcs_sz);
     }
-
-    mvvar.mark_boundry(&data, mvvar_sz);
-    mvfn.mark_boundry(&data, mvfn_sz);
     mvcs.mark_boundry(&data, mvcs_sz);
-    mvdata.set_size(mvdata_sz);
+    area_ndx += mvcs_sz;
+
+    auto shift = bss.set_shdr_map(area_start_offset, area_start_vaddr, area_ndx);
+    bss.set_shdr_size(bss.size() + shift);
+    area_phdr.p_filesz -= shift;
+    gelf_update_phdr(e, area_phdr_ndx, &area_phdr);
 
     update_relocs_sym();
     dynamic.write();

@@ -35,6 +35,8 @@ public:
     void print(size_t elem_sz);
     bool inside(uint64_t addr);
     void set_size(uint64_t nsz);
+    int64_t set_shdr_map(uint64_t offset, uint64_t vaddr, uint64_t addend);
+    void set_shdr_size(uint64_t size);
     std::optional<GElf_Rela*> get_rela(uint64_t vaddr);
     virtual bool probe_rela(GElf_Rela *rela);
     void add_rela(uint64_t source, uint64_t target);
@@ -180,6 +182,10 @@ private:
     GElf_Ehdr ehdr;
     Elf_Scn * reloc_scn;
     Elf_Scn * symtab_scn;
+    uint64_t area_start_offset;
+    uint64_t area_start_vaddr;
+    size_t area_phdr_ndx;
+    GElf_Phdr area_phdr;
 
     size_t shstrndx;
     std::vector<struct sec> secs;

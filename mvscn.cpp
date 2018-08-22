@@ -188,17 +188,34 @@ void Section::fill(uint64_t addr, byte value, size_t len) {
         b[i] = value;
 }
 
-void Section::set_size(uint64_t nsz) {
+int64_t Section::set_shdr_map(uint64_t offset, uint64_t vaddr, uint64_t addend) {
     GElf_Shdr shdr;
     gelf_getshdr(scn, &shdr);
-    auto d = elf_getdata(scn, nullptr);
 
-    d->d_size = nsz;
-    shdr.sh_size = nsz;
-    sz = nsz;
+    int64_t offset_shift = shdr.sh_offset;
+    shdr.sh_offset = offset + addend;
+    shdr.sh_addr = vaddr + addend;
+    offset_shift -= shdr.sh_offset;
 
     gelf_update_shdr(scn, &shdr);
     elf_flagshdr(scn, ELF_C_SET, ELF_F_DIRTY);
+    return offset_shift;
+}
+
+void Section::set_shdr_size(uint64_t nsz) {
+    GElf_Shdr shdr;
+    gelf_getshdr(scn, &shdr);
+
+    shdr.sh_size = nsz;
+
+    gelf_update_shdr(scn, &shdr);
+    elf_flagshdr(scn, ELF_C_SET, ELF_F_DIRTY);
+}
+
+void Section::set_size(uint64_t nsz) {
+    sz = nsz;
+    set_shdr_size(nsz);
+    elf_getdata(scn, nullptr)->d_size = nsz;
 }
 
 void Section::load(Elf* e, Elf_Scn* s) {
