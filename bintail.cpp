@@ -337,21 +337,37 @@ void Bintail::trim() {
     area_ndx += mvcs_sz;
 
     auto shift = bss.set_shdr_map(area_start_offset, area_start_vaddr, area_ndx);
-    bss.set_shdr_size(bss.size() + shift);
+    bss.set_shdr_size(bss.max_sz() + shift);
     area_phdr.p_filesz -= shift;
     gelf_update_phdr(e, area_phdr_ndx, &area_phdr);
 
     update_relocs_sym();
     dynamic.write();
+
+    /* shift sections after area */
+    auto area_end = area_start_offset + area_ndx;
+    for (auto& s: secs) {
+        gelf_getshdr(s.scn, &s.shdr);
+        if (s.shdr.sh_offset < area_end || s.name == ".bss")
+            continue;
+        s.shdr.sh_offset -= shift;
+        gelf_update_shdr(s.scn, &s.shdr);
+        elf_flagshdr(s.scn, ELF_C_SET, ELF_F_DIRTY);
+        auto d = elf_getdata(s.scn, nullptr);
+        elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
+    }
+
+    ehdr.e_shoff -= shift;
+    gelf_update_ehdr(e, &ehdr);
 }
 
 // See: libelf by example
 void Bintail::write() {
     elf_fill(0xcccccccc);
-    if (elf_update(e, ELF_C_NULL) < 0) {
-        cout << elf_errmsg(elf_errno());
-        errx(1, "elf_update(null) failed.");
-    }
+    //if (elf_update(e, ELF_C_NULL) < 0) {
+    //    cout << elf_errmsg(elf_errno()) << endl;
+    //    errx(1, "elf_update(null) failed.");
+    //}
     if (elf_update(e, ELF_C_WRITE) < 0)
         errx(1, "elf_update(write) failed.");
 }
