@@ -50,7 +50,7 @@ void MVassign::link_var(MVVar* _var) {
 
 bool MVassign::check_sym(const string &sym_match) {
     smatch m;
-    regex pat { var->name() + "_" + (var->value() ? "true" : "false")};
+    regex pat { var->name() + "_" + (var->value() ? "(1|true)" : "(0|false)") + "(\\.|$)"};
     return regex_search(sym_match, m, pat);
 }
 
@@ -292,7 +292,11 @@ MVVar::MVVar(struct mv_info_var _var, Section* rodata, Section* data)
 }
 
 void MVVar::print() {
-    cout << "Var: " << _name << "@:0x" << location() << "\n";
+    cout << "Var: " << _name << "@:0x" << location() << "\n"
+         << "\twidth=" << var.variable_width  << " flags=[ "
+         << (var.flag_tracked ? "tracked " : "")
+         << (var.flag_signed ? "signed " : "" )
+         << (var.flag_bound ? "bound " : "") << "]\n";
     for (auto& fn : fns)
         fn->print();
 }

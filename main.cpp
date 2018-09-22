@@ -12,6 +12,7 @@ void help() {
          << "Tailor multiverse executable\n"
          << "\n"
          << "-a var         Apply variable.\n"
+         << "-A             Apply all variables.\n"
          << "-d             Display multiverse configuration.\n"
          << "-f             File to edit.\n"
          << "-h             Print help.\n"
@@ -26,6 +27,7 @@ void help() {
 
 int main(int argc, char *argv[]) {
     auto filename = "./"s;
+    auto apply_all = false;
     auto display = false;
     auto write = false;
     auto trim = false;
@@ -37,10 +39,13 @@ int main(int argc, char *argv[]) {
     vector<string> apply;
     
     int opt;
-    while ((opt = getopt(argc, argv, "a:df:hglrs:twy")) != -1) {
+    while ((opt = getopt(argc, argv, "a:Adf:hglrs:twy")) != -1) {
         switch (opt) {
         case 'a':
             apply.push_back(optarg);
+            break;
+        case 'A':
+            apply_all = true;
             break;
         case 'd':
             display = true;
@@ -86,6 +91,8 @@ int main(int argc, char *argv[]) {
     for (auto& e : apply)
         bintail.apply(e, guard);
     
+    if (apply_all)
+        bintail.apply_all(guard);
     if (display)
         bintail.print();
     if (sym)

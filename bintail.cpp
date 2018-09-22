@@ -18,15 +18,22 @@
 using namespace std;
 
 static uint64_t sym_value(vector<struct symbol> &syms, const char* name) {
-    return find_if(syms.cbegin(), syms.cend(), [name](auto& s) {
+    auto it =find_if(syms.cbegin(), syms.cend(), [name](auto& s) {
             return s.name == name;
-            }).base()->sym.st_value;
+            });
+    if (it == syms.cend())
+        throw std::runtime_error("Symbol not found");
+    return it->sym.st_value;
 }
 
-static Elf_Scn * get_scn(vector<struct sec> &secs, const char* name) {
-    return find_if(secs.cbegin(), secs.cend(), [name](auto& s) {
+static std::optional<Elf_Scn*> get_scn(vector<struct sec> &secs, const char* name) {
+    auto it = find_if(secs.cbegin(), secs.cend(), [name](auto& s) {
             return s.name == name;
-            }).base()->scn;
+            });
+    if (it == secs.cend())
+        return {};
+    else 
+        return it->scn;
 }
 
 Bintail::~Bintail() {
@@ -52,6 +59,7 @@ Bintail::Bintail(string filename) {
      *-----------------------------------------------------------------------*/
     elf_flagelf(e, ELF_C_SET, ELF_F_LAYOUT);
 
+    /* Create section descriptors */
     Elf_Scn *scn = nullptr;
     GElf_Shdr shdr;
     while((scn = elf_nextscn(e, scn)) != nullptr) {
@@ -63,45 +71,78 @@ Bintail::Bintail(string filename) {
         secs.push_back(s);
     }
 
+    /* Create load segment descriptors */
+    size_t phdr_num;
+    GElf_Phdr phdr;
+    elf_getphdrnum(e, &phdr_num);
+    for (auto i=0u; i<phdr_num; i++) {
+        gelf_getphdr(e, i, &phdr);
+        if (phdr.p_type != PT_LOAD)
+            continue;
+        struct load_seg ls;
+        ls.ndx = i;
+        ls.phdr = phdr;
+        load_segs.push_back(ls);
+    }
+
     for (const auto& sec : secs)
         if (sec.shdr.sh_type == SHT_RELA && sec.shdr.sh_info == 0)
             reloc_scn = sec.scn;
 
-    symtab_scn = get_scn(secs, ".symtab");
+    symtab_scn = get_scn(secs, ".symtab").value();
+    if (symtab_scn == nullptr)
+        throw std::runtime_error("Need symtab for multiverse boundries.");
 
-    mvvar.load  (e, get_scn(secs, "__multiverse_var_"));
-    mvfn.load   (e, get_scn(secs, "__multiverse_fn_"));
-    mvcs.load   (e, get_scn(secs, "__multiverse_callsite_"));
-    mvdata.load (e, get_scn(secs, "__multiverse_data_"));
-    mvtext.load (e, get_scn(secs, "__multiverse_text_"));
-    rodata.load (e, get_scn(secs, ".rodata"));
-    data.load   (e, get_scn(secs, ".data"));
-    text.load   (e, get_scn(secs, ".text"));
-    dynamic.load(e, get_scn(secs, ".dynamic"));
-    bss.load    (e, get_scn(secs, ".bss"));
-
-    /* Get LOAD Section ending in bss */ 
-    size_t phdr_num;
-    elf_getphdrnum(e, &phdr_num);
-    for (auto i=0u; i<phdr_num; i++) {
-        area_phdr_ndx = i;
-        gelf_getphdr(e, i, &area_phdr);
-        if (area_phdr.p_type != PT_LOAD &&
-            bss.get_offset() != area_phdr.p_offset + area_phdr.p_filesz)
-            continue;
-        if ( mvvar.in_segment(area_phdr) && mvdata.in_segment(area_phdr) && 
-             mvfn.in_segment(area_phdr) && mvcs.in_segment(area_phdr))
-            break;
+    /* Must exist */
+    Elf_Scn *rodata_scn = get_scn(secs, ".rodata").value();
+    Elf_Scn *data_scn = get_scn(secs, ".data").value();
+    Elf_Scn *text_scn = get_scn(secs, ".text").value();
+    Elf_Scn *dynamic_scn = get_scn(secs, ".dynamic").value();
+    Elf_Scn *bss_scn = get_scn(secs, ".bss").value();
+    Elf_Scn *mvvar_scn = get_scn(secs, "__multiverse_var_").value();
+    rodata.load (e, rodata_scn);
+    data.load   (e, data_scn);
+    text.load   (e, text_scn);
+    dynamic.load(e, dynamic_scn);
+    bss.load    (e, bss_scn);
+    mvvar.load  (e, mvvar_scn);
+    if (mvvar.max_sz() == 0) {
+        cerr << "Executable has no multiverse variables.\n";
+        exit(0);
     }
-    /* Get start addr */
+
+    /* Must have internal consistency */
+    mvfn.load   (e, get_scn(secs, "__multiverse_fn_").value_or(nullptr));
+    mvcs.load   (e, get_scn(secs, "__multiverse_callsite_").value_or(nullptr));
+    mvdata.load (e, get_scn(secs, "__multiverse_data_").value_or(nullptr));
+    mvtext.load (e, get_scn(secs, "__multiverse_text_").value_or(nullptr));
+
+    /* Get LOAD Section with mvvar */ 
+    auto ls = find_if(load_segs.cbegin(), load_segs.cend(), [&]
+            (auto& ls){ return mvvar.in_segment(ls.phdr); });
+    if (ls == load_segs.cend())
+        throw std::runtime_error("Could not find area segment");
+    area_phdr = ls->phdr;
+    area_phdr_ndx = ls->ndx;
+
+    /* mvvar, mvfn, mvdata, mvcs, bss at the end of LOAD */
+    if (bss.get_offset() != area_phdr.p_offset + area_phdr.p_filesz)
+        throw std::runtime_error(".bss expected at the end of area");
+    if (!(mvvar.in_segment(area_phdr) && mvdata.in_segment(area_phdr)
+            && mvfn.in_segment(area_phdr) && mvcs.in_segment(area_phdr)))
+        throw std::runtime_error("mvvar, mvfn, mvdata & mvcs not in the same segment");
+
     auto area_end = area_phdr.p_offset + area_phdr.p_filesz;
     area_start_offset = area_end;
     area_start_offset = min(area_start_offset, mvvar.get_offset());
     area_start_offset = min(area_start_offset, mvdata.get_offset());
     area_start_offset = min(area_start_offset, mvfn.get_offset());
     area_start_offset = min(area_start_offset, mvcs.get_offset());
-    assert(area_start_offset + mvvar.max_sz() + mvdata.max_sz() +
-           mvcs.max_sz() + mvfn.max_sz() == area_end);
+    // // Wrong check because of alignment.
+    // // ToDo(Felix): Check for unexpected sections in area
+    //auto area_size = mvvar.max_sz() + mvdata.max_sz() + mvcs.max_sz() + mvfn.max_sz();
+    //if (area_start_offset + area_size != area_end)
+    //    throw std::runtime_error("Area has unexpected size");
     area_start_vaddr = area_phdr.p_vaddr - area_phdr.p_offset + area_start_offset;
 
     /* read info sections */
@@ -260,6 +301,11 @@ void Bintail::apply(string change_str, bool guard) {
             e->apply(&text, &mvtext, guard);
 }
 
+void Bintail::apply_all(bool guard) {
+    for (auto& e : vars)
+        e->apply(&text, &mvtext, guard);
+}
+
 void Bintail::trim() {
     // Remove relocs from multiverse sections
     mvvar.relocs.clear();
@@ -363,11 +409,11 @@ void Bintail::trim() {
 
 // See: libelf by example
 void Bintail::write() {
-    elf_fill(0xcccccccc);
-    //if (elf_update(e, ELF_C_NULL) < 0) {
-    //    cout << elf_errmsg(elf_errno()) << endl;
-    //    errx(1, "elf_update(null) failed.");
-    //}
+    elf_fill(0xcccccccc); // .dynamic
+    if (elf_update(e, ELF_C_NULL) < 0) {
+        cout << elf_errmsg(elf_errno()) << endl;
+        errx(1, "elf_update(null) failed.");
+    }
     if (elf_update(e, ELF_C_WRITE) < 0)
         errx(1, "elf_update(write) failed.");
 }

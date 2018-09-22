@@ -9,3 +9,6 @@ bintail
 edit
 before.txt
 after.txt
+glibc-elf
+libelf
+ash

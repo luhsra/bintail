@@ -91,6 +91,8 @@ void Section::add_rela(uint64_t source, uint64_t target) {
 }
 
 const std::byte* Section::buf() {
+    if (max_size == 0)
+        throw std::runtime_error("Section does not exsist");
     auto d = elf_getdata(scn, nullptr);
     return static_cast<byte*>(d->d_buf);
 }
@@ -118,12 +120,15 @@ bool Section::probe_rela(GElf_Rela *rela) {
 
 void Section::print(size_t row) {
     Elf_Data *d = elf_getdata(scn, nullptr);
+    if (d == nullptr) {
+        cout << ANSI_COLOR_RED "<Section has no data.>\n";
+        return;
+    }
     auto p = (uint8_t *)d->d_buf;
     GElf_Shdr shdr;
     gelf_getshdr(scn, &shdr);
 
     auto v = shdr.sh_addr;
-
     cout << " 0x" << hex << v << ": ";
     for (auto n = 0u; n < d->d_size; n++) {
         if (auto r = get_rela(v+n); r.has_value())
@@ -168,7 +173,7 @@ bool Section::inside(uint64_t addr) {
     return not_above && not_below;
 }
 
-bool Section::in_segment(GElf_Phdr &phdr) {
+bool Section::in_segment(const GElf_Phdr &phdr) {
     GElf_Shdr shdr;
     gelf_getshdr(scn, &shdr);
     bool not_above = shdr.sh_offset < phdr.p_offset + phdr.p_filesz;
@@ -221,6 +226,10 @@ void Section::set_size(uint64_t nsz) {
 void Section::load(Elf* e, Elf_Scn* s) {
     elf = e;
     scn = s;
+    if (scn == nullptr) {
+        max_size = 0;
+        return;
+    }
     
     GElf_Shdr shdr;
     gelf_getshdr(s, &shdr);

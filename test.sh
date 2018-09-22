@@ -20,8 +20,9 @@ test_flags() {
     done
 }
 
-samples=( `ls ../samples/*.c | sed 's/\.c$//'` )
+samples=( `ls ../samples/*.c | sed 's/\.c$//'` ../ash)
 echo "Samples: $samples"
 
 test_flags "-a config_first -w -g -t" $samples
 test_flags "-s config_first=0 -w -g -t" $samples
+test_flags "-a config_first -w -g -t" $samples

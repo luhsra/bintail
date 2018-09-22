@@ -40,7 +40,7 @@ public:
     std::optional<GElf_Rela*> get_rela(uint64_t vaddr);
     virtual bool probe_rela(GElf_Rela *rela);
     void add_rela(uint64_t source, uint64_t target);
-    bool in_segment(GElf_Phdr &phdr);
+    bool in_segment(const GElf_Phdr &phdr);
     uint64_t get_offset();
 
     constexpr size_t size()  { return sz; }
@@ -80,6 +80,9 @@ MVSection<MVInfo>::read() {
     GElf_Shdr shdr;
     gelf_getshdr(scn, &shdr);
     Elf_Data *d = elf_getdata(scn, nullptr);
+    if (d == nullptr) // Section has no data
+        return std::move(v);
+
     const std::byte* buf = static_cast<std::byte*>(d->d_buf);
     for (auto i = 0; i * sizeof(MVInfo) < shdr.sh_size; i++) {
         auto e = *((MVInfo*)buf + i);
@@ -133,6 +136,11 @@ struct sec {
     std::string name;
 };
 
+struct load_seg {
+    size_t ndx;
+    GElf_Phdr phdr;
+};
+
 struct symbol {
     GElf_Sym sym;
     std::string name;
@@ -155,6 +163,7 @@ public:
 
     void change(std::string change_str);
     void apply(std::string apply_str, bool guard);
+    void apply_all(bool guard);
 
     Section rodata;
     Section data;
@@ -189,5 +198,6 @@ private:
 
     size_t shstrndx;
     std::vector<struct sec> secs;
+    std::vector<struct load_seg> load_segs;
 };
 #endif
