@@ -7,30 +7,10 @@ using namespace std;
 
 #include "bintail.h"
 
-void help() {
-    cout << "USAGE: bintail [-d] [-w] -f <filename>\n"
-         << "Tailor multiverse executable\n"
-         << "\n"
-         << "-a var         Apply variable.\n"
-         << "-A             Apply all variables.\n"
-         << "-d             Display multiverse configuration.\n"
-         << "-f             File to edit.\n"
-         << "-h             Print help.\n"
-         << "-l             Show dynamic info.\n"
-         << "-r             Dump mvrelocs.\n"
-         << "-s var=value   Set variable to value.\n"
-         << "-t             Trim fixed multiverse data.\n"
-         << "-w             Write file.\n"
-         << "-y             Dump Symbols.\n"
-         << "\n";
-}
-
 int main(int argc, char *argv[]) {
-    auto filename = "./"s;
     auto apply_all = false;
     auto display = false;
-    auto write = false;
-    auto trim = false;
+    auto write = true;
     auto guard = false;
     auto dyn = false;
     auto sym = false;
@@ -39,7 +19,8 @@ int main(int argc, char *argv[]) {
     vector<string> apply;
     
     int opt;
-    while ((opt = getopt(argc, argv, "a:Adf:hglrs:twy")) != -1) {
+    int rt = 1;
+    while ((opt = getopt(argc, argv, "a:Adhglrs:twy")) != -1) {
         switch (opt) {
         case 'a':
             apply.push_back(optarg);
@@ -49,12 +30,6 @@ int main(int argc, char *argv[]) {
             break;
         case 'd':
             display = true;
-            break;
-        case 'f':
-            filename += optarg;
-            break;
-        case 'h':
-            help();
             break;
         case 'g':
             guard = true;
@@ -68,43 +43,58 @@ int main(int argc, char *argv[]) {
         case 's':
             changes.push_back(optarg);
             break;
-        case 't':
-            trim = true;
-            break;
-        case 'w':
-            write = true;
-            break;
         case 'y':
             sym = true;
             break;
+        case 'h':
+            rt = 0;
         default:
-            cerr << "Wrong args.\n";
-            help();
+            cerr << "Usage: bintail [-d] [-w] infile outfile\n"
+                 << "Tailor multiverse executable\n"
+                 << "\n"
+                 << "-a var         Apply variable.\n"
+                 << "-A             Apply all variables.\n"
+                 << "-d             Display multiverse configuration.\n"
+                 << "-h             Print help.\n"
+                 << "-l             Show dynamic info.\n"
+                 << "-r             Dump mvrelocs.\n"
+                 << "-s var=value   Set variable to value.\n"
+                 << "-y             Dump Symbols.\n"
+                 << "\n";
+            return rt;
+        }
+    }
+    if (optind+2 != argc) {
+        if (optind+1 == argc) {
+            write = false;
+        } else {
+            cerr << "Expected 1-2 arguments\n";
             return 1;
         }
     }
 
-    Bintail bintail{filename};
+    auto infile = argv[optind];
+    auto outfile = argv[optind+1];
+    Bintail bintail{infile};
 
-    for (auto& e : changes)
-        bintail.change(e);
-    for (auto& e : apply)
-        bintail.apply(e, guard);
-    
-    if (apply_all)
-        bintail.apply_all(guard);
-    if (display)
-        bintail.print();
     if (sym)
         bintail.print_sym();
     if (dyn)
         bintail.print_dyn();
     if (mvreloc)
         bintail.print_reloc();
-    if (trim)
-        bintail.trim();
+    if (display)
+        bintail.print();
+
+    for (auto& e : changes)
+        bintail.change(e);
+    for (auto& e : apply)
+        bintail.apply(e, guard);
+    if (apply_all)
+        bintail.apply_all(guard);
+
     if (write)
-        bintail.write();
+        bintail.write(outfile);
 
     return 0;
 }

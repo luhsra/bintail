@@ -41,7 +41,9 @@ public:
     virtual bool probe_rela(GElf_Rela *rela);
     void add_rela(uint64_t source, uint64_t target);
     bool in_segment(const GElf_Phdr &phdr);
+    bool is_nobits();
     uint64_t get_offset();
+    uint64_t get_vaddr();
 
     constexpr size_t size()  { return sz; }
     constexpr size_t max_sz()  { return max_size; }
@@ -51,9 +53,10 @@ public:
     const std::byte* buf(uint64_t addr);
 
     std::vector<GElf_Rela> relocs;
-    Elf_Scn * scn;
+    Elf_Scn * scn; // ToDo(Felix): remove
+    Elf_Scn * scn_out;
 protected:
-    Elf * elf;
+    Elf * elf; // ToDo(Felix): remove
     uint64_t get_offset(uint64_t addr);
     size_t sz;
     uint64_t max_size;
@@ -136,19 +139,41 @@ struct sec {
     std::string name;
 };
 
-struct load_seg {
-    size_t ndx;
-    GElf_Phdr phdr;
-};
-
 struct symbol {
     GElf_Sym sym;
     std::string name;
 };
 
+class Area {
+public:
+    Area(Elf *e_out);
+    void set_phdr(GElf_Phdr &_phdr, const size_t &_ndx);
+    bool test_phdr(GElf_Phdr &phdr);
+    void add_section(Section *section);
+    bool is_empty(Elf_Scn *scn);
+    void match(Elf_Scn *scn_in, Elf_Scn *scn_out);
+    void shrink_phdr(uint64_t amnt);
+
+    constexpr bool not_found() { return !found; }
+    constexpr uint64_t start_offset() { return area_offset_start; }
+    constexpr uint64_t end_offset() { return area_offset_end; }
+    constexpr uint64_t start_vaddr() { return area_vaddr_start; }
+    constexpr uint64_t end_vaddr() { return area_vaddr_end; }
+private:
+    bool found = false;
+    GElf_Phdr phdr;
+    size_t ndx;
+    uint64_t area_offset_start;
+    uint64_t area_offset_end;
+    uint64_t area_vaddr_start;
+    uint64_t area_vaddr_end;
+    std::vector<Section*> sections;
+    Elf *e_out;
+};
+
 class Bintail {
 public:
-    Bintail(std::string filename);
+    Bintail(const char *infile);
     ~Bintail();
 
     void print(); // Display mv_info_* structs in __multiverse_* section
@@ -157,8 +182,7 @@ public:
     void print_dyn();
     void print_vars();
 
-    void write();
-    void trim();
+    void write(const char *outfile);
     void update_relocs_sym();
 
     void change(std::string change_str);
@@ -186,18 +210,11 @@ public:
     std::vector<symbol>  syms;
 private:
     /* Elf file */
-    int fd;
-    Elf* e;
-    GElf_Ehdr ehdr;
-    Elf_Scn * reloc_scn;
-    Elf_Scn * symtab_scn;
-    uint64_t area_start_offset;
-    uint64_t area_start_vaddr;
-    size_t area_phdr_ndx;
-    GElf_Phdr area_phdr;
+    int infd, outfd;
+    Elf *e_in, *e_out;
+    Elf_Scn *reloc_scn;
+    Elf_Scn *symtab_scn;
 
-    size_t shstrndx;
     std::vector<struct sec> secs;
-    std::vector<struct load_seg> load_segs;
 };
 #endif

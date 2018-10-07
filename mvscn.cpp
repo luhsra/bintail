@@ -15,6 +15,60 @@
 
 using namespace std;
 
+//------------------Area---------------------------------------
+Area::Area(Elf *_e_out) {
+    e_out = _e_out;
+}
+void Area::set_phdr(GElf_Phdr &_phdr, const size_t &_ndx) {
+    phdr = _phdr;
+    ndx = _ndx;
+    found = true;
+    area_offset_end = _phdr.p_offset + _phdr.p_filesz;
+    area_offset_start = area_offset_end;
+    area_vaddr_end = _phdr.p_vaddr + _phdr.p_memsz;
+
+    for (auto& s : sections) {
+        auto soff = s->get_offset();
+        if (area_offset_start > soff) {
+            area_offset_start = soff;
+            area_vaddr_start = s->get_vaddr();
+        }
+    }
+}
+
+bool Area::test_phdr(GElf_Phdr &phdr) {
+    for (auto &s : sections) {
+        if (s->max_sz() == 0) // section doesn't exist
+            continue;
+        if (s->in_segment(phdr))
+            continue;
+    }
+    return true;
+}
+
+void Area::add_section(Section *s) {
+    sections.push_back(s);
+}
+bool Area::is_empty(Elf_Scn *scn) {
+    for (auto& s : sections) {
+        if (scn == s->scn && !(s->is_nobits()) && s->max_sz() == 0)
+            return true;
+    }
+    return false;
+}
+
+void Area::match(Elf_Scn *scn_in, Elf_Scn *scn_out) {
+    for (auto& s : sections) {
+        if (scn_in == s->scn)
+            s->scn_out = scn_out;
+    }
+}
+
+void Area::shrink_phdr(uint64_t amnt) {
+    phdr.p_filesz -= amnt;
+    gelf_update_phdr(e_out, ndx, &phdr);
+
+}
 //------------------DataSection--------------------------------
 void DataSection::add_data(MVData* md) {
     ds.push_back(md);
@@ -102,6 +156,8 @@ const std::byte* Section::buf(uint64_t addr) {
 }
 
 std::byte* Section::dirty_buf() {
+    if (max_size == 0)
+        throw std::runtime_error("Section does not exsist");
     auto d = elf_getdata(scn, nullptr);
     elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
     return static_cast<byte*>(d->d_buf);
@@ -165,6 +221,12 @@ string Section::get_string(uint64_t addr) {
     return {reinterpret_cast<const char*>(buf()) + offset};
 }
 
+bool Section::is_nobits() {
+    GElf_Shdr shdr;
+    gelf_getshdr(scn, &shdr);
+    return shdr.sh_type == SHT_NOBITS;
+}
+
 bool Section::inside(uint64_t addr) {
     GElf_Shdr shdr;
     gelf_getshdr(scn, &shdr);
@@ -176,9 +238,18 @@ bool Section::inside(uint64_t addr) {
 bool Section::in_segment(const GElf_Phdr &phdr) {
     GElf_Shdr shdr;
     gelf_getshdr(scn, &shdr);
+    // last section in mvinfo_area bss
+    bool last_nobits = shdr.sh_offset == phdr.p_offset + phdr.p_filesz
+        && shdr.sh_type == SHT_NOBITS && shdr.sh_size > 0;
     bool not_above = shdr.sh_offset < phdr.p_offset + phdr.p_filesz;
     bool not_below = shdr.sh_offset >= phdr.p_offset;
-    return not_above && not_below;
+    return (not_above && not_below) || last_nobits;
+}
+
+uint64_t Section::get_vaddr() {
+    GElf_Shdr shdr;
+    gelf_getshdr(scn, &shdr);
+    return shdr.sh_addr;
 }
 
 uint64_t Section::get_offset() {
