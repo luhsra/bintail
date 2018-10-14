@@ -75,9 +75,9 @@ static bool is_ret(const uint8_t* addr) {
     return addr[0] == 0xc3 || (addr[0] == 0xf3 && addr[1] == 0xc3);
 }
 
-MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, DataSection* mvdata, Section* mvtext) {
+MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, MVDataSection* mvdata, Section* mvtext) {
     mvfn = _mvfn;
-    auto op = reinterpret_cast<const uint8_t*>(mvtext->buf(mvfn.function_body));
+    auto op = reinterpret_cast<const uint8_t*>(mvtext->in_buf(mvfn.function_body));
     // 31 c0: xor    %eax,%eax
     if ((op[0] == 0x31 && op[1] == 0xc0) && is_ret(op + 2)) {
         mvfn.type = MVFN_TYPE_CONSTANT;
@@ -95,7 +95,7 @@ MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, DataSection* mvdata, Section* mvtext)
         mvfn.type = MVFN_TYPE_NONE;
     }
     auto assign_infos = reinterpret_cast<const struct mv_info_assignment*>
-        (mvdata->buf(mvfn.assignments));
+        (mvdata->in_buf(mvfn.assignments));
     for_each(assign_infos, assign_infos+mvfn.n_assignments, [&](auto ainfo)
             { assigns.push_back(make_unique<MVassign>(ainfo)); });
 }
@@ -203,7 +203,7 @@ size_t MVFn::make_info(byte* buf, Section* sec, uint64_t vaddr) {
     return sizeof(mv_info_fn);
 }
 
-size_t MVFn::make_mvdata(std::byte* buf, DataSection* mvdata, uint64_t vaddr) {
+size_t MVFn::make_mvdata(std::byte* buf, MVDataSection *mvdata, uint64_t vaddr) {
     /*        v-esz                                           v-asz
      * mvfn[3] assigns_mvfn0[] assigns_mvfn1[] assigns_mvfn2[]
      */
@@ -221,7 +221,7 @@ void MVFn::add_pp(MVPP* pp) {
     pps.push_back(pp);
 }
 
-MVFn::MVFn(struct mv_info_fn& _fn, DataSection* mvdata, Section* mvtext, Section* rodata)
+MVFn::MVFn(struct mv_info_fn& _fn, MVDataSection *mvdata, Section *mvtext, Section *rodata)
     :frozen{false} {
     fn = _fn;
     name = rodata->get_string(fn.name);
@@ -230,7 +230,7 @@ MVFn::MVFn(struct mv_info_fn& _fn, DataSection* mvdata, Section* mvtext, Section
         return;
 
     auto mvfn_array = reinterpret_cast<const struct mv_info_mvfn*>
-        (mvdata->buf(fn.mv_functions));
+        (mvdata->in_buf(fn.mv_functions));
     for_each(mvfn_array, mvfn_array+fn.n_mv_functions, [&](auto minfo)
             { mvfns.push_back(make_unique<MVmvfn>(minfo, mvdata, mvtext));} );
 }
@@ -275,16 +275,16 @@ MVVar::MVVar(struct mv_info_var _var, Section* rodata, Section* data)
     //ignores signed
     switch (var.variable_width) {
         case 1:
-            _value = reinterpret_cast<const uint8_t*>(data->buf(var.variable_location))[0];
+            _value = reinterpret_cast<const uint8_t*>(data->in_buf(var.variable_location))[0];
             break;
         case 2:
-            _value = reinterpret_cast<const uint16_t*>(data->buf(var.variable_location))[0];
+            _value = reinterpret_cast<const uint16_t*>(data->in_buf(var.variable_location))[0];
             break;
         case 4:
-            _value = reinterpret_cast<const uint32_t*>(data->buf(var.variable_location))[0];
+            _value = reinterpret_cast<const uint32_t*>(data->in_buf(var.variable_location))[0];
             break;
         case 8:
-            _value = reinterpret_cast<const uint64_t*>(data->buf(var.variable_location))[0];
+            _value = reinterpret_cast<const uint64_t*>(data->in_buf(var.variable_location))[0];
             break;
         default:
             throw std::runtime_error("Unexpected variable_witdh.\n");
@@ -320,7 +320,7 @@ void MVVar::link_fn(MVFn* fn) {
 void MVVar::set_value(int v, Section* data) {
     _value = v;
     assert(var.variable_width == 4); 
-    auto b = reinterpret_cast<int32_t*>(data->dirty_buf(var.variable_location));
+    auto b = reinterpret_cast<int32_t*>(data->out_buf(var.variable_location));
     b[0] = v;
 }
 
@@ -378,7 +378,7 @@ void MVPP::print() {
 
 uint64_t MVPP::decode_callsite(struct mv_info_callsite& cs, Section* text) {
     pp.location = cs.call_label;
-    auto op = reinterpret_cast<const uint8_t*>(text->buf(cs.call_label));
+    auto op = reinterpret_cast<const uint8_t*>(text->in_buf(cs.call_label));
     uint64_t callee = 0;
     if (op[0] == 0xe8) { // normal call
         callee = cs.call_label + *(int*)(op + 1) + 5;
@@ -393,7 +393,7 @@ uint64_t MVPP::decode_callsite(struct mv_info_callsite& cs, Section* text) {
 
 void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* mvtext) {
     auto txt = (text->inside(pp.location) ? text : mvtext );
-    auto op = reinterpret_cast<unsigned char*>(txt->dirty_buf(pp.location));
+    auto op = reinterpret_cast<unsigned char*>(txt->out_buf(pp.location));
     uint32_t offset;
     switch(pp.type) {
         case PP_TYPE_X86_JUMP:
@@ -438,7 +438,7 @@ void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* m
         default:
             throw std::runtime_error("Could not apply patchpoint.");
     } 
-    auto d = elf_getdata(txt->scn, nullptr);
+    auto d = elf_getdata(txt->scn_out, nullptr); // Implizit diry_buf ?
     elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
 }
 

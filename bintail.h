@@ -29,103 +29,85 @@ class Section {
 public:
     Section() :sz{0} {}
 
-    void load(Elf * elf, Elf_Scn * s);
+    void load(Elf_Scn * s);
     std::string get_string(uint64_t addr);
     void fill(uint64_t addr, std::byte value, size_t len);
-    void print(size_t elem_sz);
-    bool inside(uint64_t addr);
-    void set_size(uint64_t nsz);
-    int64_t set_shdr_map(uint64_t offset, uint64_t vaddr, uint64_t addend);
-    void set_shdr_size(uint64_t size);
+    void print(size_t elem_sz); // scn_in
+    bool inside(uint64_t addr); // scn_in
     std::optional<GElf_Rela*> get_rela(uint64_t vaddr);
     virtual bool probe_rela(GElf_Rela *rela);
     void add_rela(uint64_t source, uint64_t target);
     bool in_segment(const GElf_Phdr &phdr);
     bool is_nobits();
-    uint64_t get_offset();
-    uint64_t get_vaddr();
+    void set_scn_out(Elf_Scn *_scn_out) { scn_out = _scn_out;}
 
     constexpr size_t size()  { return sz; }
     constexpr size_t max_sz()  { return max_size; }
-    std::byte* dirty_buf();
-    std::byte* dirty_buf(uint64_t addr);
-    const std::byte* buf();
-    const std::byte* buf(uint64_t addr);
+    std::byte* out_buf();
+    std::byte* out_buf(uint64_t addr);
+    const std::byte* in_buf();
+    const std::byte* in_buf(uint64_t addr);
+    void write_ptr(uint64_t address, uint64_t destination);
+
+    virtual bool is_needed();      // (in outfile)
+    
+    void set_out_scn(Elf_Scn *scn_out);
 
     std::vector<GElf_Rela> relocs;
-    Elf_Scn * scn; // ToDo(Felix): remove
-    Elf_Scn * scn_out;
+    Elf_Scn * scn_in;
+    Elf_Scn * scn_out = nullptr;
 protected:
-    Elf * elf; // ToDo(Felix): remove
-    uint64_t get_offset(uint64_t addr);
     size_t sz;
     uint64_t max_size;
 };
 
-template <typename MVInfo>
 class MVSection : public Section {
 public:
-    std::unique_ptr<std::vector<MVInfo>> read();
     bool probe_rela(GElf_Rela *rela);
-    void mark_boundry(Section* data, size_t size);
 
     uint64_t start_ptr;
     uint64_t stop_ptr;
-private:
+protected:
     void add_data(MVData* );
 };
 
-//------------------MVSection--------------------------------
-template <typename MVInfo>
-std::unique_ptr<std::vector<MVInfo>>
-MVSection<MVInfo>::read() {
-    auto v = std::make_unique<std::vector<MVInfo>>();
-    GElf_Shdr shdr;
-    gelf_getshdr(scn, &shdr);
-    Elf_Data *d = elf_getdata(scn, nullptr);
-    if (d == nullptr) // Section has no data
-        return std::move(v);
-
-    const std::byte* buf = static_cast<std::byte*>(d->d_buf);
-    for (auto i = 0; i * sizeof(MVInfo) < shdr.sh_size; i++) {
-        auto e = *((MVInfo*)buf + i);
-        v->push_back(e);
-    }
-    return std::move(v);
-}
-
-template <typename MVInfo>
-bool MVSection<MVInfo>::probe_rela(GElf_Rela *rela) {
-    if (rela->r_offset == start_ptr || rela->r_offset == stop_ptr)
-        return true;
-    return Section::probe_rela(rela);
-}
-
-template <typename MVInfo>
-void MVSection<MVInfo>::mark_boundry(Section* data, size_t size) {
-    GElf_Shdr shdr;
-    gelf_getshdr(scn, &shdr);
-
-    reinterpret_cast<uint64_t*>(data->dirty_buf(start_ptr))[0] = shdr.sh_addr;
-    add_rela(start_ptr, shdr.sh_addr);
-    reinterpret_cast<uint64_t*>(data->dirty_buf(stop_ptr))[0] = shdr.sh_addr+size;
-    add_rela(stop_ptr, shdr.sh_addr+size);
-
-    set_size(size);
-}
-//-----------------------------------------------------------
-
-class DataSection : public Section {
+class BssSection : public Section {
 public:
-    void add_data(MVData* );
-    void write();
-private:
-    std::vector<MVData*> ds;
+    uint64_t generate(uint64_t offset, uint64_t vaddr_start, uint64_t vaddr_end);
+    uint64_t old_sz();
+    uint64_t new_sz();
+};
+
+class MVFnSection : public MVSection {
+public:
+    std::unique_ptr<std::vector<struct mv_info_fn>> read();
+    uint64_t generate(std::vector<std::unique_ptr<MVFn>> &fns,
+        uint64_t offset, uint64_t vaddr, Section *data);
+};
+
+class MVVarSection : public MVSection {
+public:
+    std::unique_ptr<std::vector<struct mv_info_var>> read();
+    uint64_t generate(std::vector<std::shared_ptr<MVVar>> &vars,
+        uint64_t offset, uint64_t vaddr, Section *data);
+};
+
+class MVCsSection : public MVSection {
+public:
+    std::unique_ptr<std::vector<struct mv_info_callsite>> read();
+    uint64_t generate(std::vector<std::unique_ptr<MVPP>> &pps,
+        uint64_t offset, uint64_t vaddr, Section *data);
+};
+
+class MVDataSection : public MVSection {
+public:
+    uint64_t generate(std::vector<std::unique_ptr<MVFn>> &fns,
+        uint64_t offset, uint64_t vaddr);
 };
 
 class Dynamic : public Section {
 public:
-    void load(Elf* elf, Elf_Scn * s);
+    void load(Elf_Scn *scn_in);
     void write();
     void print();
     GElf_Dyn* get_dyn(int64_t tag);
@@ -147,19 +129,18 @@ struct symbol {
 class Area {
 public:
     Area(Elf *e_out);
+    virtual ~Area() {}
     void set_phdr(GElf_Phdr &_phdr, const size_t &_ndx);
-    bool test_phdr(GElf_Phdr &phdr);
-    void add_section(Section *section);
-    bool is_empty(Elf_Scn *scn);
-    void match(Elf_Scn *scn_in, Elf_Scn *scn_out);
-    void shrink_phdr(uint64_t amnt);
+    virtual bool test_phdr(GElf_Phdr &phdr) = 0;
+    virtual void find_start_of_area() = 0;
+    virtual uint64_t size_in_file() = 0;
 
     constexpr bool not_found() { return !found; }
     constexpr uint64_t start_offset() { return area_offset_start; }
     constexpr uint64_t end_offset() { return area_offset_end; }
     constexpr uint64_t start_vaddr() { return area_vaddr_start; }
     constexpr uint64_t end_vaddr() { return area_vaddr_end; }
-private:
+protected:
     bool found = false;
     GElf_Phdr phdr;
     size_t ndx;
@@ -167,8 +148,39 @@ private:
     uint64_t area_offset_end;
     uint64_t area_vaddr_start;
     uint64_t area_vaddr_end;
-    std::vector<Section*> sections;
     Elf *e_out;
+};
+
+class InfoArea : public Area {
+public:
+    InfoArea(Elf *e_out, MVDataSection *mvdata, MVVarSection *mvvar, 
+            MVFnSection *mvfn, MVCsSection *mvcs, BssSection *bss);
+    uint64_t generate(
+        std::vector<std::shared_ptr<MVVar>> &vars,
+        std::vector<std::unique_ptr<MVFn>> &fns,
+        std::vector<std::unique_ptr<MVPP>> &pps,
+        Section *data);
+    void find_start_of_area();
+    bool test_phdr(GElf_Phdr &phdr);
+    uint64_t size_in_file();
+    uint64_t shrink();
+private:
+    MVDataSection *mvdata;
+    MVVarSection *mvvar;
+    MVFnSection *mvfn;
+    MVCsSection *mvcs;
+    BssSection *bss;
+};
+
+class TextArea : public Area {
+public:
+    TextArea(Elf *e_out, Section *mvtext);
+    uint64_t generate();
+    void find_start_of_area();
+    bool test_phdr(GElf_Phdr &phdr);
+    uint64_t size_in_file();
+private:
+    Section *mvtext;
 };
 
 class Bintail {
@@ -182,24 +194,32 @@ public:
     void print_dyn();
     void print_vars();
 
-    void write(const char *outfile);
+    void init_write(const char *outfile);
+    void write();
     void update_relocs_sym();
 
     void change(std::string change_str);
     void apply(std::string apply_str, bool guard);
     void apply_all(bool guard);
 
+    std::unique_ptr<InfoArea> mvinfo_area;
+    std::unique_ptr<TextArea> mvtext_area;
+
     Section rodata;
-    Section data;
     Section text;
-    Section bss;
+
+    /* editable */
+    Section data;
+
+    /* generable */
+    BssSection bss;
     Dynamic dynamic;
 
     /* MV Sections */
-    MVSection<struct mv_info_fn> mvfn;
-    MVSection<struct mv_info_var> mvvar;
-    MVSection<struct mv_info_callsite> mvcs;
-    DataSection mvdata;
+    MVFnSection mvfn;
+    MVVarSection mvvar;
+    MVCsSection mvcs;
+    MVDataSection mvdata;
     Section mvtext;
 
     std::vector<std::shared_ptr<MVVar>> vars;
@@ -216,5 +236,6 @@ private:
     Elf_Scn *symtab_scn;
 
     std::vector<struct sec> secs;
+    std::map<Elf_Scn*, Section*> scn_handler;
 };
 #endif

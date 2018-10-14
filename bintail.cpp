@@ -77,27 +77,52 @@ Bintail::Bintail(const char *infile) {
 
     /* Must exist */
     Elf_Scn *rodata_scn = get_scn(secs, ".rodata").value();
-    Elf_Scn *data_scn = get_scn(secs, ".data").value();
-    Elf_Scn *text_scn = get_scn(secs, ".text").value();
-    Elf_Scn *dynamic_scn = get_scn(secs, ".dynamic").value();
-    Elf_Scn *bss_scn = get_scn(secs, ".bss").value();
-    Elf_Scn *mvvar_scn = get_scn(secs, "__multiverse_var_").value();
-    rodata.load (e_in, rodata_scn);
-    data.load   (e_in, data_scn);
-    text.load   (e_in, text_scn);
-    dynamic.load(e_in, dynamic_scn);
-    bss.load    (e_in, bss_scn);
-    mvvar.load  (e_in, mvvar_scn);
-    if (mvvar.max_sz() == 0) {
-        cerr << "Executable has no multiverse variables.\n";
-        exit(0);
-    }
+    rodata.load (rodata_scn);
+    scn_handler[rodata_scn] = &rodata;
 
-    /* Must have internal consistency */
-    mvfn.load   (e_in, get_scn(secs, "__multiverse_fn_").value_or(nullptr));
-    mvcs.load   (e_in, get_scn(secs, "__multiverse_callsite_").value_or(nullptr));
-    mvdata.load (e_in, get_scn(secs, "__multiverse_data_").value_or(nullptr));
-    mvtext.load (e_in, get_scn(secs, "__multiverse_text_").value_or(nullptr));
+    Elf_Scn *data_scn = get_scn(secs, ".data").value();
+    data.load(data_scn);
+    scn_handler[data_scn] = &data;
+
+    Elf_Scn *dynamic_scn = get_scn(secs, ".dynamic").value();
+    dynamic.load(dynamic_scn);
+    scn_handler[dynamic_scn] = &dynamic;
+
+    Elf_Scn *text_scn = get_scn(secs, ".text").value();
+    text.load(text_scn);
+    scn_handler[text_scn] = &text;
+
+    Elf_Scn *bss_scn = get_scn(secs, ".bss").value();
+    bss.load(bss_scn);
+    scn_handler[bss_scn] = &bss;
+
+    Elf_Scn *mvvar_scn = get_scn(secs, "__multiverse_var_").value();
+    if (mvvar_scn == nullptr) 
+        throw std::runtime_error("Executable has no multiverse variables.\n");
+    mvvar.load(mvvar_scn);
+    scn_handler[mvvar_scn] = &mvvar;
+
+    /* Sections may not exsist */
+    auto mvfn_scn = get_scn(secs, "__multiverse_fn_");
+    if (mvfn_scn.has_value()) {
+        mvfn.load(mvfn_scn.value());
+        scn_handler[mvfn_scn.value()] = &mvfn;
+    }
+    auto mvcs_scn = get_scn(secs, "__multiverse_callsite_");
+    if (mvcs_scn.has_value()) {
+        mvcs.load(mvcs_scn.value());
+        scn_handler[mvcs_scn.value()] = &mvcs;
+    }
+    auto mvdata_scn = get_scn(secs, "__multiverse_data_");
+    if (mvdata_scn.has_value()) {
+        mvdata.load(mvdata_scn.value());
+        scn_handler[mvdata_scn.value()] = &mvdata;
+    }
+    auto mvtext_scn = get_scn(secs, "__multiverse_text_");
+    if (mvtext_scn.has_value()) {
+        mvtext.load(mvtext_scn.value());
+        scn_handler[mvtext_scn.value()] = &mvtext;
+    }
 
     /* read info sections */
     auto mvvar_infos = mvvar.read();
@@ -260,7 +285,8 @@ void Bintail::update_relocs_sym() {
     elf_flagshdr(symtab_scn, ELF_C_SET, ELF_F_DIRTY);
 }
 
-void Bintail::write(const char *outfile) {
+/* Create file until MVInfo data */
+void Bintail::init_write(const char *outfile) {
     if ((outfd = open(outfile, O_WRONLY|O_CREAT, S_IRUSR|S_IWUSR|S_IXUSR)) == -1) 
         errx(1, "open %s failed. %s", outfile, strerror(errno));
     if ((e_out = elf_begin(outfd, ELF_C_WRITE, NULL)) == nullptr)
@@ -271,14 +297,8 @@ void Bintail::write(const char *outfile) {
     gelf_newehdr(e_out, ELFCLASS64);
 
     /* MV Areas */
-    Area mvinfo_area{e_out};
-    mvinfo_area.add_section(&mvvar);
-    mvinfo_area.add_section(&mvfn);
-    mvinfo_area.add_section(&mvdata);
-    mvinfo_area.add_section(&mvcs);
-    mvinfo_area.add_section(&bss);
-    Area mvtext_area{e_out};
-    mvtext_area.add_section(&mvtext);
+    mvinfo_area = make_unique<InfoArea>(e_out, &mvdata, &mvvar, &mvfn, &mvcs, &bss);
+    mvtext_area = make_unique<TextArea>(e_out, &mvtext);
 
     /* Copy & find area segments */
     size_t phdr_num;
@@ -292,15 +312,14 @@ void Bintail::write(const char *outfile) {
         gelf_update_phdr(e_out, i, &out_phdr);
         if (in_phdr.p_type != PT_LOAD)
             continue;
-        if (mvinfo_area.test_phdr(in_phdr))
-            mvinfo_area.set_phdr(in_phdr, i);
-        if (mvtext_area.test_phdr(in_phdr))
-            mvtext_area.set_phdr(in_phdr, i);
+        if (mvinfo_area->test_phdr(in_phdr))
+            mvinfo_area->set_phdr(in_phdr, i);
+        if (mvtext_area->test_phdr(in_phdr))
+            mvtext_area->set_phdr(in_phdr, i);
     }
-    // ToDo(Felix): bss check in Area
-    if (mvinfo_area.not_found())
+    if (mvinfo_area->not_found())
         throw std::runtime_error("Could not find info area segment");
-    if (mvtext_area.not_found() && mvtext.max_sz() != 0)
+    if (mvtext_area->not_found() && mvtext.max_sz() != 0)
         throw std::runtime_error("Could not find text area segment");
 
     /* Copy & filter scns for new elf */
@@ -310,132 +329,54 @@ void Bintail::write(const char *outfile) {
     size_t shstrndx;
     elf_getshdrstrndx(e_in, &shstrndx);
     while((scn_in = elf_nextscn(e_in, scn_in)) != nullptr) {
-        if (mvinfo_area.is_empty(scn_in) || mvtext_area.is_empty(scn_in))
-            continue;
-        if ((scn_out = elf_newscn(e_out)) == nullptr)
-            errx(1, "elf_newscn failed.");
-        mvinfo_area.match(scn_in, scn_out);
-        mvtext_area.match(scn_in, scn_out);
+        auto it = scn_handler.find(scn_in);
+        if (it != scn_handler.end()) {
+            auto sec = it->second;
+            if (sec->is_needed() == false)
+                continue;
+            if ((scn_out = elf_newscn(e_out)) == nullptr)
+                errx(1, "elf_newscn failed.");
+            sec->set_out_scn(scn_out);
+        } else {
+            if ((scn_out = elf_newscn(e_out)) == nullptr)
+                errx(1, "elf_newscn failed.");
+        }
+
+        /* Copy scn shdr & data */
         gelf_getshdr(scn_in, &shdr_in);
         gelf_getshdr(scn_out, &shdr_out);
         shdr_out = shdr_in;
         gelf_update_shdr(scn_out, &shdr_out);
-        // if scn_in is in area do not copy, generate
+
         data_in = elf_getdata(scn_in, nullptr);
         if ((data_out = elf_newdata(scn_out)) == nullptr)
             errx(1, "elf_newdata failed.");
-        *data_out = *data_in;
-        if (shdr_in.sh_type == SHT_NOBITS)
-            continue;
-        data_out->d_buf = malloc(data_in->d_size); // ToDo(Felix): unique_ptr somehow
-        memcpy(data_out->d_buf, data_in->d_buf, data_in->d_size);
+        *data_out = *data_in; // malloc & memcpy ???
     }
+}
 
-    /*
-     * AREA:
-     * [ ... | mvdata | mvfn | mvvar | mvcs | .bss ]
-     * area_ndx : offset into area
-     */
-    auto area_ndx = 0ul;
-    uint64_t vaddr;
-
-    // Section: __multiverse_data_
-    size_t mvdata_sz = 0;
-    GElf_Shdr mvdata_shdr;
-    byte* mvdata_buf;
-    mvdata.relocs.clear();
-    if (mvdata.size() > 0) {
-        mvdata.set_shdr_map(mvinfo_area.start_offset(), mvinfo_area.start_vaddr(), area_ndx);
-        mvdata_buf = mvdata.dirty_buf();
-        gelf_getshdr(mvdata.scn, &mvdata_shdr);
-        vaddr = mvdata_shdr.sh_addr;
-        for (auto& e:fns) {
-            if (e->is_fixed())
-                continue;
-            e->set_mvfn_vaddr(vaddr + mvdata_sz);
-            mvdata_sz += e->make_mvdata(mvdata_buf+mvdata_sz, &mvdata, vaddr+mvdata_sz);
-        }
-        mvdata.set_size(mvdata_sz);
-    }
-    area_ndx += mvdata_sz;
-
-    // Section: __multiverse_fn_
-    size_t mvfn_sz = 0;
-    GElf_Shdr mvfn_shdr;
-    mvfn.relocs.clear();
-    byte* mvfn_buf;
-    if (mvfn.size() > 0) {
-        mvfn.set_shdr_map(mvinfo_area.start_offset(), mvinfo_area.start_vaddr(), area_ndx);
-        mvfn_buf = mvfn.dirty_buf();
-        gelf_getshdr(mvfn.scn, &mvfn_shdr);
-        vaddr = mvfn_shdr.sh_addr;
-        for (auto& e:fns) {
-            if (e->is_fixed())
-                continue;
-            mvfn_sz += e->make_info(mvfn_buf+mvfn_sz, &mvfn, vaddr+mvfn_sz);
-        }
-    }
-    mvfn.mark_boundry(&data, mvfn_sz);
-    area_ndx += mvfn_sz;
-
-    // Section: __multiverse_var_
-    mvvar.relocs.clear();
-    size_t mvvar_sz = 0;
-    byte* mvvar_buf;
-    GElf_Shdr mvvar_shdr;
-    if (mvvar.size() > 0) {
-        mvvar.set_shdr_map(mvinfo_area.start_offset(), mvinfo_area.start_vaddr(), area_ndx);
-        mvvar_buf = mvvar.dirty_buf();
-        gelf_getshdr(mvvar.scn, &mvvar_shdr);
-        vaddr = mvvar_shdr.sh_addr;
-        for (auto& e:vars) {
-            if (e->frozen)
-                continue;
-            mvvar_sz += e->make_info(mvvar_buf+mvvar_sz, &mvvar, vaddr+mvvar_sz);
-        }
-    }
-    mvvar.mark_boundry(&data, mvvar_sz);
-    area_ndx += mvvar_sz;
-
-    // Section: __multiverse_callsite_
-    mvcs.relocs.clear();
-    GElf_Shdr mvcs_shdr;
-    byte* mvcs_buf;
-    size_t mvcs_sz = 0;
-    if (mvcs.size() > 0) {
-        mvcs.set_shdr_map(mvinfo_area.start_offset(), mvinfo_area.start_vaddr(), area_ndx);
-        mvcs_buf = mvcs.dirty_buf();
-        gelf_getshdr(mvcs.scn, &mvcs_shdr);
-        vaddr = mvcs_shdr.sh_addr;
-        for (auto& e:pps) {
-            if ( e->_fn->is_fixed() || e->pp.type == PP_TYPE_X86_JUMP)
-                continue;
-            mvcs_sz += e->make_info(mvcs_buf+mvcs_sz, &mvcs, vaddr+mvcs_sz);
-        }
-    }
-    mvcs.mark_boundry(&data, mvcs_sz);
-    area_ndx += mvcs_sz;
-
-    auto shift = bss.set_shdr_map(mvinfo_area.start_offset(), mvinfo_area.start_vaddr(), area_ndx);
-    bss.set_shdr_size(bss.max_sz() + shift);
-    mvinfo_area.shrink_phdr(shift);
+void Bintail::write() {
+    mvinfo_area->generate(vars, fns, pps, &data);
 
     update_relocs_sym();
     dynamic.write();
 
-    /* shift sections after area */
-    auto area_end = mvinfo_area.start_offset() + area_ndx;
-    for (auto& s: secs) {
-        gelf_getshdr(s.scn, &s.shdr);
-        if (s.shdr.sh_offset < area_end || s.name == ".bss")
-            continue;
-        s.shdr.sh_offset -= shift;
-        gelf_update_shdr(s.scn, &s.shdr);
-        elf_flagshdr(s.scn, ELF_C_SET, ELF_F_DIRTY);
-        auto d = elf_getdata(s.scn, nullptr);
-        elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
-    }
+    auto area_end = mvinfo_area->end_offset();
+    auto shift = bss.new_sz() - bss.old_sz();
 
+    /* shift sections after area */
+    GElf_Shdr shdr;
+    Elf_Scn *scn = nullptr;
+    while ((scn = elf_nextscn(e_out, scn))) {
+        gelf_getshdr(scn, &shdr);
+        if (shdr.sh_offset < area_end || scn == bss.scn_out)
+            continue;
+        shdr.sh_offset -= shift;
+        gelf_update_shdr(scn, &shdr);
+        //elf_flagshdr(scn, ELF_C_SET, ELF_F_DIRTY);
+        //auto d = elf_getdata(scn, nullptr);
+        //elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
+    }
 
     /* Fill new ehdr */
     GElf_Ehdr ehdr_in, ehdr_out;
@@ -444,17 +385,10 @@ void Bintail::write(const char *outfile) {
     ehdr_out = ehdr_in;
     
     // Section table after sections, adjust for bss (growth in mem, 0 in file)
-    // TODO(Felix): shift again
-    ///ehdr_out.e_shoff -= shift;
-    cout << "shift=0x" << hex << shift << endl;
+    ehdr_out.e_shoff -= shift;
     gelf_update_ehdr(e_out, &ehdr_out);
 
-    elf_fill(0xcccccccc); // asm(int 0x3) // ToDo(Felix): .dynamic
-    // One elf_update should be enough (manual layout)
-    //if (elf_update(e_out, ELF_C_NULL) < 0) {
-    //    cout << elf_errmsg(elf_errno()) << endl;
-    //    errx(1, "elf_update(null) failed.");
-    //}
+    elf_fill(0xcccccccc); // asm(int 0x3) // ToDo(Felix): .dynamic fill
     if (elf_update(e_out, ELF_C_WRITE) < 0) {
         cout << elf_errmsg(elf_errno()) << endl;
         errx(1, "elf_update(write) failed.");

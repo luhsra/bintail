@@ -86,6 +86,11 @@ int main(int argc, char *argv[]) {
     if (display)
         bintail.print();
 
+    if (!write)
+        return 0;
+
+    bintail.init_write(outfile);
+
     for (auto& e : changes)
         bintail.change(e);
     for (auto& e : apply)
@@ -93,8 +98,7 @@ int main(int argc, char *argv[]) {
     if (apply_all)
         bintail.apply_all(guard);
 
-    if (write)
-        bintail.write(outfile);
+    bintail.write();
 
     return 0;
 }

@@ -19,6 +19,7 @@ using namespace std;
 Area::Area(Elf *_e_out) {
     e_out = _e_out;
 }
+
 void Area::set_phdr(GElf_Phdr &_phdr, const size_t &_ndx) {
     phdr = _phdr;
     ndx = _ndx;
@@ -26,76 +27,352 @@ void Area::set_phdr(GElf_Phdr &_phdr, const size_t &_ndx) {
     area_offset_end = _phdr.p_offset + _phdr.p_filesz;
     area_offset_start = area_offset_end;
     area_vaddr_end = _phdr.p_vaddr + _phdr.p_memsz;
+    find_start_of_area();
+}
 
-    for (auto& s : sections) {
-        auto soff = s->get_offset();
-        if (area_offset_start > soff) {
-            area_offset_start = soff;
-            area_vaddr_start = s->get_vaddr();
+//-----------------TextArea---------------------------------------
+TextArea::TextArea(Elf *e_out, Section *_mvtext) :
+    Area(e_out) {
+    mvtext = _mvtext;
+}
+
+uint64_t TextArea::generate() {
+    auto area_ndx = 0ul;
+    // ToDo(Felix): this
+    return area_ndx;
+}
+
+void TextArea::find_start_of_area() {
+    GElf_Shdr shdr;
+    gelf_getshdr(mvtext->scn_in, &shdr);
+
+    area_offset_start = shdr.sh_offset;
+    area_vaddr_start = shdr.sh_addr;
+}
+
+bool TextArea::test_phdr(GElf_Phdr &phdr) {
+    return mvtext->in_segment(phdr);
+}
+
+uint64_t TextArea::size_in_file() {
+    return mvtext->size();
+}
+
+//------------------InfoArea---------------------------------------
+InfoArea::InfoArea(Elf *e_out, MVDataSection *_mvdata, MVVarSection *_mvvar,
+        MVFnSection *_mvfn, MVCsSection *_mvcs, BssSection *_bss) :
+    Area(e_out) {
+    mvdata = _mvdata;
+    mvvar = _mvvar;
+    mvfn =  _mvfn;
+    mvcs =  _mvcs;
+    bss =  _bss;
+}
+
+uint64_t InfoArea::size_in_file() {
+    return mvdata->max_sz() + mvvar->max_sz()
+        + mvfn->max_sz() + mvcs->max_sz();
+}
+
+bool InfoArea::test_phdr(GElf_Phdr &phdr) {
+    return bss->in_segment(phdr)
+        && ( mvdata->in_segment(phdr) || mvdata->max_sz() == 0 )
+        && ( mvvar->in_segment(phdr) || mvvar->max_sz() == 0 )
+        && ( mvfn->in_segment(phdr) || mvfn->max_sz() == 0 )
+        && ( mvcs->in_segment(phdr) || mvcs->max_sz() == 0 );
+}
+
+void InfoArea::find_start_of_area() {
+    GElf_Shdr shdr;
+    Section* secs[] = {mvdata, mvvar, mvfn, mvcs};
+    for (auto& s : secs) {
+        gelf_getshdr(s->scn_in, &shdr);
+        if (area_offset_start > shdr.sh_offset) {
+            area_offset_start = shdr.sh_offset;
+            area_vaddr_start = shdr.sh_addr;
         }
     }
 }
 
-bool Area::test_phdr(GElf_Phdr &phdr) {
-    for (auto &s : sections) {
-        if (s->max_sz() == 0) // section doesn't exist
-            continue;
-        if (s->in_segment(phdr))
-            continue;
-    }
-    return true;
-}
+/*
+ * InfoAREA:
+ * [ ... | mvdata | mvfn | mvvar | mvcs | .bss ]
+ */
+uint64_t InfoArea::generate(
+    std::vector<std::shared_ptr<MVVar>> &vars,
+    std::vector<std::unique_ptr<MVFn>> &fns,
+    std::vector<std::unique_ptr<MVPP>> &pps,
+    Section *data) {
+    /* ToDo(Felix):
+     * this function should only relocate the exsisting sections,
+     * generation should happen in the section method.
+     */
+    auto area_pos = 0ul;
 
-void Area::add_section(Section *s) {
-    sections.push_back(s);
-}
-bool Area::is_empty(Elf_Scn *scn) {
-    for (auto& s : sections) {
-        if (scn == s->scn && !(s->is_nobits()) && s->max_sz() == 0)
-            return true;
-    }
-    return false;
-}
+    area_pos += mvdata->generate(
+            fns, area_offset_start+area_pos, area_vaddr_start+area_pos);
+    area_pos += mvfn->generate(
+            fns, area_offset_start+area_pos, area_vaddr_start+area_pos, data);
+    area_pos += mvvar->generate(
+            vars, area_offset_start+area_pos, area_vaddr_start+area_pos, data);
+    area_pos += mvcs->generate(
+            pps, area_offset_start+area_pos, area_vaddr_start+area_pos, data);
 
-void Area::match(Elf_Scn *scn_in, Elf_Scn *scn_out) {
-    for (auto& s : sections) {
-        if (scn_in == s->scn)
-            s->scn_out = scn_out;
-    }
-}
+    /* Shift and expand .bss in mem, move to end in file */
+    auto shift = bss->generate(area_offset_start + area_pos,
+            area_vaddr_start + area_pos, area_vaddr_end);
 
-void Area::shrink_phdr(uint64_t amnt) {
-    phdr.p_filesz -= amnt;
+    /* Shrink Segment */
+    phdr.p_filesz -= shift;
     gelf_update_phdr(e_out, ndx, &phdr);
 
-}
-//------------------DataSection--------------------------------
-void DataSection::add_data(MVData* md) {
-    ds.push_back(md);
+    return shift;
 }
 
-void DataSection::write() {
-    auto d = elf_getdata(scn, nullptr);
-    auto buf = reinterpret_cast<byte*>(d->d_buf);
-    auto off = 0ul;
+//------------------MVSection--------------------------------
+bool MVSection::probe_rela(GElf_Rela *rela) {
+    if (rela->r_offset == start_ptr || rela->r_offset == stop_ptr)
+        return true;
+    return Section::probe_rela(rela);
+}
+
+//-----------------MVFnSection-------------------------------
+std::unique_ptr<std::vector<struct mv_info_fn>> MVFnSection::read() {
+    auto v = std::make_unique<std::vector<struct mv_info_fn>>();
+    auto d = elf_getdata(scn_in, nullptr);
+    if (d == nullptr) // Section has no data
+        return v;
 
     GElf_Shdr shdr;
-    gelf_getshdr(scn, &shdr);
+    gelf_getshdr(scn_in, &shdr);
 
+    // ToDo(Felix): stupid casting???
+    const std::byte* buf = static_cast<std::byte*>(d->d_buf);
+    for (auto i = 0; i * sizeof(struct mv_info_fn) < shdr.sh_size; i++) {
+        auto e = *((struct mv_info_fn*)buf + i);
+        v->push_back(e);
+    }
+    return v;
+}
+
+uint64_t MVFnSection::generate(std::vector<std::unique_ptr<MVFn>> &fns,
+        uint64_t offset, uint64_t vaddr, Section *data) {
     relocs.clear();
-    for (auto& e:ds)
-        off += e->make_info(buf + off, this, shdr.sh_addr + off);
-    elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
+    auto ndx = 0;
+    /* no data -> section not needed */
+    if (scn_out != nullptr) {
+        /* data */
+        auto data = elf_getdata(scn_out, nullptr);
+        auto buf = static_cast<byte*>(data->d_buf);
 
-    set_size(off);
+        for (auto& e:fns) {
+            if (e->is_fixed())
+                continue;
+            ndx += e->make_info(buf+ndx, this, vaddr+ndx);
+        }
+        data->d_size = ndx;
+        elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
+        
+        /* shdr */
+        GElf_Shdr shdr;
+        gelf_getshdr(scn_in, &shdr);
+
+        shdr.sh_offset = offset;
+        shdr.sh_addr = vaddr;
+        shdr.sh_size = ndx;
+
+        gelf_update_shdr(scn_out, &shdr);
+        elf_flagshdr(scn_out, ELF_C_SET, ELF_F_DIRTY);
+    }
+    
+    /* start/stop_ptr for libmultiverse */
+    data->write_ptr(start_ptr, vaddr);
+    data->write_ptr(stop_ptr, vaddr+ndx);
+    return ndx;
+}
+
+//-----------------MVVarSection-------------------------------
+std::unique_ptr<std::vector<struct mv_info_var>> MVVarSection::read() {
+    auto v = std::make_unique<std::vector<struct mv_info_var>>();
+    auto d = elf_getdata(scn_in, nullptr);
+    if (d == nullptr) // Section has no data
+        return v;
+
+    GElf_Shdr shdr;
+    gelf_getshdr(scn_in, &shdr);
+
+    // ToDo(Felix): stupid casting???
+    const std::byte* buf = static_cast<std::byte*>(d->d_buf);
+    for (auto i = 0; i * sizeof(struct mv_info_var) < shdr.sh_size; i++) {
+        auto e = *((struct mv_info_var*)buf + i);
+        v->push_back(e);
+    }
+    return v;
+}
+
+uint64_t MVVarSection::generate(std::vector<std::shared_ptr<MVVar>> &vars,
+        uint64_t offset, uint64_t vaddr, Section *data) {
+    relocs.clear();
+    auto ndx = 0;
+
+    if (scn_out != nullptr) { // no data -> section not needed
+        /* data */
+        auto data = elf_getdata(scn_out, nullptr);
+        auto buf = static_cast<byte*>(data->d_buf);
+
+        for (auto& e:vars) {
+            if (e->frozen)
+                continue;
+            ndx += e->make_info(buf+ndx, this, vaddr+ndx);
+        }
+        data->d_size = ndx;
+        elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
+        
+        /* shdr */
+        GElf_Shdr shdr;
+        gelf_getshdr(scn_in, &shdr);
+
+        shdr.sh_offset = offset;
+        shdr.sh_addr = vaddr;
+        shdr.sh_size = ndx;
+
+        gelf_update_shdr(scn_out, &shdr);
+        elf_flagshdr(scn_out, ELF_C_SET, ELF_F_DIRTY);
+    }
+    
+    /* start/stop_ptr for libmultiverse */
+    data->write_ptr(start_ptr, vaddr);
+    data->write_ptr(stop_ptr, vaddr+ndx);
+    return ndx;
+}
+
+//-----------------MVCsSection-------------------------------
+std::unique_ptr<std::vector<struct mv_info_callsite>> MVCsSection::read() {
+    auto v = std::make_unique<std::vector<struct mv_info_callsite>>();
+    auto d = elf_getdata(scn_in, nullptr);
+    if (d == nullptr) // Section has no data
+        return v;
+
+    GElf_Shdr shdr;
+    gelf_getshdr(scn_in, &shdr);
+
+    // ToDo(Felix): stupid casting???
+    const std::byte* buf = static_cast<std::byte*>(d->d_buf);
+    for (auto i = 0; i * sizeof(struct mv_info_callsite) < shdr.sh_size; i++) {
+        auto e = *((struct mv_info_callsite*)buf + i);
+        v->push_back(e);
+    }
+    return v;
+}
+
+uint64_t MVCsSection::generate(std::vector<std::unique_ptr<MVPP>> &pps,
+        uint64_t offset, uint64_t vaddr, Section *data) {
+    relocs.clear();
+    auto ndx = 0;
+    if (scn_out != nullptr) { // no data -> section not needed
+        /* data */
+        auto data = elf_getdata(scn_out, nullptr);
+        auto buf = static_cast<byte*>(data->d_buf);
+
+        for (auto& e:pps) {
+            if ( e->_fn->is_fixed() || e->pp.type == PP_TYPE_X86_JUMP)
+                continue;
+            ndx += e->make_info(buf+ndx, this, vaddr+ndx);
+        }
+        data->d_size = ndx;
+        elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
+
+        /* shdr */
+        GElf_Shdr shdr;
+        gelf_getshdr(scn_in, &shdr);
+
+        shdr.sh_offset = offset;
+        shdr.sh_addr = vaddr;
+        shdr.sh_size = ndx;
+
+        gelf_update_shdr(scn_out, &shdr);
+        elf_flagshdr(scn_out, ELF_C_SET, ELF_F_DIRTY);
+    }
+    
+    /* start/stop_ptr for libmultiverse */
+    data->write_ptr(start_ptr, vaddr);
+    data->write_ptr(stop_ptr, vaddr+ndx);
+    return ndx;
+}
+
+//------------------MVDataSection--------------------------------
+uint64_t MVDataSection::generate(std::vector<std::unique_ptr<MVFn>> &fns,
+        uint64_t offset, uint64_t vaddr) {
+    relocs.clear();
+    if (scn_out == nullptr) { // no data -> section not needed
+        return 0;
+    }
+
+    /* data */
+    auto data = elf_getdata(scn_out, nullptr);
+    auto buf = static_cast<byte*>(data->d_buf);
+
+    auto ndx = 0;
+    for (auto& e:fns) {
+        if (e->is_fixed())
+            continue;
+        e->set_mvfn_vaddr(vaddr + ndx);
+        ndx += e->make_mvdata(buf+ndx, this, vaddr+ndx);
+    }
+    data->d_size = ndx;
+    elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
+    
+    /* shdr */
+    GElf_Shdr shdr;
+    gelf_getshdr(scn_in, &shdr);
+
+    shdr.sh_offset = offset;
+    shdr.sh_addr = vaddr;
+    shdr.sh_size = ndx;
+    //shdr.sh_addralign = 1; // ToDo(Felix): why 16?
+
+    gelf_update_shdr(scn_out, &shdr);
+    elf_flagshdr(scn_out, ELF_C_SET, ELF_F_DIRTY);
+
+    return ndx;
+}
+
+//------------------BssSection---------------------------------
+uint64_t BssSection::generate(uint64_t offset, uint64_t vaddr_start, uint64_t vaddr_end) {
+    /* shdr */
+    GElf_Shdr shdr;
+    gelf_getshdr(scn_in, &shdr);
+
+    auto old_offset = shdr.sh_offset;
+    shdr.sh_offset = offset;
+    shdr.sh_addr = vaddr_start;
+    shdr.sh_size = vaddr_end - vaddr_start;
+    auto shift = old_offset - offset;
+
+    gelf_update_shdr(scn_out, &shdr);
+    elf_flagshdr(scn_out, ELF_C_SET, ELF_F_DIRTY);
+
+    return shift;
+}
+
+uint64_t BssSection::old_sz() {
+    GElf_Shdr shdr;
+    gelf_getshdr(scn_in, &shdr);
+    return shdr.sh_size;
+}
+
+uint64_t BssSection::new_sz() {
+    GElf_Shdr shdr;
+    gelf_getshdr(scn_out, &shdr);
+    return shdr.sh_size;
 }
 
 //------------------Dynamic------------------------------------
-void Dynamic::load(Elf* e, Elf_Scn* s) {
-    Section::load(e,s);
-    auto d = elf_getdata(scn, nullptr);
+void Dynamic::load(Elf_Scn *scn_in) {
+    Section::load(scn_in);
+    auto d = elf_getdata(scn_in, nullptr);
     GElf_Shdr shdr;
-    gelf_getshdr(scn, &shdr);
+    gelf_getshdr(scn_in, &shdr);
 
     for (auto i=0; i * shdr.sh_entsize < d->d_size; i++) {
         auto dyn = make_unique<GElf_Dyn>();
@@ -123,16 +400,22 @@ GElf_Dyn* Dynamic::get_dyn(int64_t tag) {
 }
 
 void Dynamic::write() {
+    /* data */
     int i = 0;
-    Elf_Data *d = elf_getdata(scn, nullptr);
+    auto d = elf_getdata(scn_out, nullptr);
     for (auto& dyn : dyns) 
         if (!gelf_update_dyn(d, i++, dyn.get()))
-            cout << "Error: gelf_update_dyn() "
-                << elf_errmsg(elf_errno()) << endl;
+            cout << "Error: gelf_update_dyn() " << elf_errmsg(elf_errno()) << endl;
     elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
 
-    auto nsz = i * sizeof(GElf_Dyn);
-    set_size(nsz);
+    /* shdr */
+    GElf_Shdr shdr;
+    gelf_getshdr(scn_in, &shdr);
+
+    shdr.sh_size = i * sizeof(GElf_Dyn);
+
+    gelf_update_shdr(scn_out, &shdr);
+    elf_flagshdr(scn_out, ELF_C_SET, ELF_F_DIRTY);
 }
 
 //------------------Section------------------------------------
@@ -144,27 +427,29 @@ void Section::add_rela(uint64_t source, uint64_t target) {
     relocs.push_back(rela);
 }
 
-const std::byte* Section::buf() {
-    if (max_size == 0)
-        throw std::runtime_error("Section does not exsist");
-    auto d = elf_getdata(scn, nullptr);
+const std::byte* Section::in_buf() {
+    auto d = elf_getdata(scn_in, nullptr);
     return static_cast<byte*>(d->d_buf);
 }
 
-const std::byte* Section::buf(uint64_t addr) {
-    return buf()+get_offset(addr);
+const std::byte* Section::in_buf(uint64_t addr) {
+    GElf_Shdr shdr;
+    gelf_getshdr(scn_in, &shdr);
+    return in_buf()+(addr-shdr.sh_addr);
 }
 
-std::byte* Section::dirty_buf() {
-    if (max_size == 0)
+std::byte* Section::out_buf() {
+    if (scn_out == nullptr)
         throw std::runtime_error("Section does not exsist");
-    auto d = elf_getdata(scn, nullptr);
+    auto d = elf_getdata(scn_out, nullptr);
     elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
     return static_cast<byte*>(d->d_buf);
 }
 
-std::byte* Section::dirty_buf(uint64_t addr) {
-    return dirty_buf()+get_offset(addr);
+std::byte* Section::out_buf(uint64_t addr) {
+    GElf_Shdr shdr;
+    gelf_getshdr(scn_out, &shdr);
+    return out_buf()+(addr-shdr.sh_addr);
 }
 
 bool Section::probe_rela(GElf_Rela *rela) {
@@ -174,15 +459,41 @@ bool Section::probe_rela(GElf_Rela *rela) {
     return claim;
 }
 
+void Section::write_ptr(uint64_t address, uint64_t destination) {
+    GElf_Shdr shdr;
+    gelf_getshdr(scn_out, &shdr);
+    auto d = elf_getdata(scn_out, nullptr);
+
+    auto off = address - shdr.sh_addr;
+    if (address < shdr.sh_addr)
+        throw std::runtime_error("Section write error, addr to low");
+    if (off > d->d_size)
+        throw std::runtime_error("Section write error, addr to high");
+
+    auto buf = static_cast<uint8_t*>(d->d_buf);
+    auto dest = reinterpret_cast<uint64_t*>(buf+off);
+
+    *dest = destination;
+    add_rela(address, destination);
+}
+
+bool Section::is_needed() {
+    return true;
+}
+
+void Section::set_out_scn(Elf_Scn *_scn_out) {
+    scn_out = _scn_out;
+}
+
 void Section::print(size_t row) {
-    Elf_Data *d = elf_getdata(scn, nullptr);
+    Elf_Data *d = elf_getdata(scn_in, nullptr);
     if (d == nullptr) {
         cout << ANSI_COLOR_RED "<Section has no data.>\n";
         return;
     }
     auto p = (uint8_t *)d->d_buf;
     GElf_Shdr shdr;
-    gelf_getshdr(scn, &shdr);
+    gelf_getshdr(scn_in, &shdr);
 
     auto v = shdr.sh_addr;
     cout << " 0x" << hex << v << ": ";
@@ -208,28 +519,19 @@ optional<GElf_Rela*> Section::get_rela(uint64_t vaddr) {
         return r.base();
 }
 
-uint64_t Section::get_offset(uint64_t addr) {
-    GElf_Shdr shdr;
-    gelf_getshdr(scn, &shdr);
-    auto offset = addr - shdr.sh_addr;
-    assert(offset < 0 || offset >= sz);
-    return offset;
-}
-
 string Section::get_string(uint64_t addr) {
-    auto offset = get_offset(addr);
-    return {reinterpret_cast<const char*>(buf()) + offset};
+    return {reinterpret_cast<const char*>(in_buf(addr))};
 }
 
 bool Section::is_nobits() {
     GElf_Shdr shdr;
-    gelf_getshdr(scn, &shdr);
+    gelf_getshdr(scn_in, &shdr);
     return shdr.sh_type == SHT_NOBITS;
 }
 
 bool Section::inside(uint64_t addr) {
     GElf_Shdr shdr;
-    gelf_getshdr(scn, &shdr);
+    gelf_getshdr(scn_in, &shdr);
     bool not_above = addr < shdr.sh_addr + shdr.sh_size;
     bool not_below = addr >= shdr.sh_addr;
     return not_above && not_below;
@@ -237,7 +539,7 @@ bool Section::inside(uint64_t addr) {
 
 bool Section::in_segment(const GElf_Phdr &phdr) {
     GElf_Shdr shdr;
-    gelf_getshdr(scn, &shdr);
+    gelf_getshdr(scn_in, &shdr);
     // last section in mvinfo_area bss
     bool last_nobits = shdr.sh_offset == phdr.p_offset + phdr.p_filesz
         && shdr.sh_type == SHT_NOBITS && shdr.sh_size > 0;
@@ -246,58 +548,15 @@ bool Section::in_segment(const GElf_Phdr &phdr) {
     return (not_above && not_below) || last_nobits;
 }
 
-uint64_t Section::get_vaddr() {
-    GElf_Shdr shdr;
-    gelf_getshdr(scn, &shdr);
-    return shdr.sh_addr;
-}
-
-uint64_t Section::get_offset() {
-    GElf_Shdr shdr;
-    gelf_getshdr(scn, &shdr);
-    return shdr.sh_offset;
-}
-
 void Section::fill(uint64_t addr, byte value, size_t len) {
-    auto b = dirty_buf() + get_offset(addr);
+    auto b = out_buf(addr);
     for(auto i=0ul; i<len; i++)
         b[i] = value;
 }
 
-int64_t Section::set_shdr_map(uint64_t offset, uint64_t vaddr, uint64_t addend) {
-    GElf_Shdr shdr;
-    gelf_getshdr(scn, &shdr);
-
-    int64_t offset_shift = shdr.sh_offset;
-    shdr.sh_offset = offset + addend;
-    shdr.sh_addr = vaddr + addend;
-    offset_shift -= shdr.sh_offset;
-
-    gelf_update_shdr(scn, &shdr);
-    elf_flagshdr(scn, ELF_C_SET, ELF_F_DIRTY);
-    return offset_shift;
-}
-
-void Section::set_shdr_size(uint64_t nsz) {
-    GElf_Shdr shdr;
-    gelf_getshdr(scn, &shdr);
-
-    shdr.sh_size = nsz;
-
-    gelf_update_shdr(scn, &shdr);
-    elf_flagshdr(scn, ELF_C_SET, ELF_F_DIRTY);
-}
-
-void Section::set_size(uint64_t nsz) {
-    sz = nsz;
-    set_shdr_size(nsz);
-    elf_getdata(scn, nullptr)->d_size = nsz;
-}
-
-void Section::load(Elf* e, Elf_Scn* s) {
-    elf = e;
-    scn = s;
-    if (scn == nullptr) {
+void Section::load(Elf_Scn* s) {
+    scn_in = s;
+    if (scn_in == nullptr) {
         max_size = 0;
         return;
     }

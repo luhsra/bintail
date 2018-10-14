@@ -65,7 +65,7 @@ struct mv_info_mvfn {
 
 class MVmvfn : public MVData {
 public:
-    MVmvfn(struct mv_info_mvfn& _mvfn, DataSection* data, Section* text);
+    MVmvfn(struct mv_info_mvfn& _mvfn, MVDataSection* data, Section* text);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
     size_t make_info_ass(std::byte* buf, Section* scn, uint64_t vaddr);
     void set_info_assigns(uint64_t vaddr);
@@ -103,14 +103,14 @@ struct mv_info_fn {
 
 class MVFn : public MVData {
 public:
-    MVFn(struct mv_info_fn& _fn, DataSection* data, Section* text, Section* rodata);
+    MVFn(struct mv_info_fn& _fn, MVDataSection* data, Section* text, Section* rodata);
     size_t make_info(std::byte* buf, Section* scn, uint64_t vaddr);
     void print();
     void probe_var(MVVar* var);
     void probe_sym(struct symbol &sym);
     void add_pp(MVPP* pp);
     void apply(Section* text, Section* mvtext, bool guard);
-    size_t make_mvdata(std::byte* buf, DataSection* mvdata, uint64_t vaddr);
+    size_t make_mvdata(std::byte* buf, MVDataSection* mvdata, uint64_t vaddr);
     void set_mvfn_vaddr(uint64_t vaddr);
 
     constexpr bool is_fixed() { return frozen; }
