@@ -47,7 +47,7 @@ public:
     std::byte* out_buf(uint64_t addr);
     const std::byte* in_buf();
     const std::byte* in_buf(uint64_t addr);
-    void write_ptr(uint64_t address, uint64_t destination);
+    void write_ptr(bool fpic, uint64_t address, uint64_t destination);
 
     virtual bool is_needed();      // (in outfile)
     
@@ -81,27 +81,27 @@ public:
 class MVFnSection : public MVSection {
 public:
     std::unique_ptr<std::vector<struct mv_info_fn>> read();
-    uint64_t generate(std::vector<std::unique_ptr<MVFn>> &fns,
+    uint64_t generate(bool fpic, std::vector<std::unique_ptr<MVFn>> &fns,
         uint64_t offset, uint64_t vaddr, Section *data);
 };
 
 class MVVarSection : public MVSection {
 public:
     std::unique_ptr<std::vector<struct mv_info_var>> read();
-    uint64_t generate(std::vector<std::shared_ptr<MVVar>> &vars,
+    uint64_t generate(bool fpic, std::vector<std::shared_ptr<MVVar>> &vars,
         uint64_t offset, uint64_t vaddr, Section *data);
 };
 
 class MVCsSection : public MVSection {
 public:
     std::unique_ptr<std::vector<struct mv_info_callsite>> read();
-    uint64_t generate(std::vector<std::unique_ptr<MVPP>> &pps,
+    uint64_t generate(bool fpic, std::vector<std::unique_ptr<MVPP>> &pps,
         uint64_t offset, uint64_t vaddr, Section *data);
 };
 
 class MVDataSection : public MVSection {
 public:
-    uint64_t generate(std::vector<std::unique_ptr<MVFn>> &fns,
+    uint64_t generate(bool fpic, std::vector<std::unique_ptr<MVFn>> &fns,
         uint64_t offset, uint64_t vaddr);
 };
 
@@ -128,7 +128,7 @@ struct symbol {
 
 class Area {
 public:
-    Area(Elf *e_out);
+    Area(Elf *e_out, bool fpic);
     virtual ~Area() {}
     void set_phdr(GElf_Phdr &_phdr, const size_t &_ndx);
     virtual bool test_phdr(GElf_Phdr &phdr) = 0;
@@ -149,11 +149,12 @@ protected:
     uint64_t area_vaddr_start;
     uint64_t area_vaddr_end;
     Elf *e_out;
+    bool fpic;
 };
 
 class InfoArea : public Area {
 public:
-    InfoArea(Elf *e_out, MVDataSection *mvdata, MVVarSection *mvvar, 
+    InfoArea(Elf *e_out, bool fpic, MVDataSection *mvdata, MVVarSection *mvvar, 
             MVFnSection *mvfn, MVCsSection *mvcs, BssSection *bss);
     uint64_t generate(
         std::vector<std::shared_ptr<MVVar>> &vars,
@@ -174,7 +175,7 @@ private:
 
 class TextArea : public Area {
 public:
-    TextArea(Elf *e_out, Section *mvtext);
+    TextArea(Elf *e_out, bool fpic, Section *mvtext);
     uint64_t generate();
     void find_start_of_area();
     bool test_phdr(GElf_Phdr &phdr);
@@ -232,7 +233,11 @@ private:
     /* Elf file */
     int infd, outfd;
     Elf *e_in, *e_out;
-    Elf_Scn *reloc_scn;
+    GElf_Ehdr ehdr_in, ehdr_out;
+
+    Elf_Scn *reloc_scn_in;
+    Elf_Scn *reloc_scn_out;
+
     Elf_Scn *symtab_scn;
 
     std::vector<struct sec> secs;

@@ -52,6 +52,9 @@ Bintail::Bintail(const char *infile) {
     if ((e_in = elf_begin(infd, ELF_C_READ, NULL)) == nullptr)
         errx(1, "elf_begin infile failed.");
 
+    /* EHDR */
+    gelf_getehdr(e_in, &ehdr_in);
+
     /* Read sections */
     Elf_Scn *scn = nullptr;
     GElf_Shdr shdr;
@@ -66,16 +69,14 @@ Bintail::Bintail(const char *infile) {
         secs.push_back(s);
     }
 
-    // ToDo(Felix): Multiple reloc sections
-    for (const auto& sec : secs)
-        if (sec.shdr.sh_type == SHT_RELA && sec.shdr.sh_info == 0)
-            reloc_scn = sec.scn;
 
     symtab_scn = get_scn(secs, ".symtab").value();
     if (symtab_scn == nullptr)
         throw std::runtime_error("Need symtab for multiverse boundries.");
 
     /* Must exist */
+    reloc_scn_in = get_scn(secs, ".rela.dyn").value(); // also reachable over DYNAMIC section
+
     Elf_Scn *rodata_scn = get_scn(secs, ".rodata").value();
     rodata.load (rodata_scn);
     scn_handler[rodata_scn] = &rodata;
@@ -180,10 +181,9 @@ Bintail::Bintail(const char *infile) {
         for (auto& fn : fns)
             fn->probe_sym(sym);
 
-    // Remove claimed relocs (Regenerate on trim)
     GElf_Rela rela;
-    gelf_getshdr(reloc_scn, &shdr);
-    auto d = elf_getdata(reloc_scn, nullptr);
+    gelf_getshdr(reloc_scn_in, &shdr);
+    auto d = elf_getdata(reloc_scn_in, nullptr);
     for (size_t i=0; i < d->d_size / shdr.sh_entsize; i++) {
         gelf_getrela(d, i, &rela);
         auto claims = 0u;
@@ -239,9 +239,9 @@ void Bintail::update_relocs_sym() {
     };
 
     GElf_Shdr shdr, sym_shdr;
-    gelf_getshdr(reloc_scn, &shdr);
+    gelf_getshdr(reloc_scn_out, &shdr);
     gelf_getshdr(symtab_scn, &sym_shdr);
-    auto d = elf_getdata(reloc_scn, nullptr);
+    auto d = elf_getdata(reloc_scn_out, nullptr);
     auto d2 = elf_getdata(symtab_scn, nullptr);
 
     // RELOCS
@@ -252,8 +252,7 @@ void Bintail::update_relocs_sym() {
             if (r.r_info == R_X86_64_RELATIVE)
                 cnt++;
             if (!gelf_update_rela (d, i++, &r))
-                cout << "Error: gelf_update_rela() "
-                    << elf_errmsg(elf_errno()) << endl;
+                throw std::runtime_error("Error: gelf_update_rela() "s + elf_errmsg(elf_errno()));
         }
 
     assert(sizeof(GElf_Rela) == shdr.sh_entsize);
@@ -279,9 +278,9 @@ void Bintail::update_relocs_sym() {
 
     elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
     elf_flagdata(d2, ELF_C_SET, ELF_F_DIRTY);
-    gelf_update_shdr(reloc_scn, &shdr);
+    gelf_update_shdr(reloc_scn_out, &shdr);
     gelf_update_shdr(symtab_scn, &sym_shdr);
-    elf_flagshdr(reloc_scn, ELF_C_SET, ELF_F_DIRTY);
+    elf_flagshdr(reloc_scn_out, ELF_C_SET, ELF_F_DIRTY);
     elf_flagshdr(symtab_scn, ELF_C_SET, ELF_F_DIRTY);
 }
 
@@ -295,10 +294,13 @@ void Bintail::init_write(const char *outfile) {
      // Manual layout: Sections in segments have to be relocated manualy
     elf_flagelf(e_out, ELF_C_SET, ELF_F_LAYOUT);
     gelf_newehdr(e_out, ELFCLASS64);
+    gelf_getehdr(e_out, &ehdr_out);
+    ehdr_out = ehdr_in;
+    bool fpic = (ehdr_in.e_type == ET_DYN);
 
     /* MV Areas */
-    mvinfo_area = make_unique<InfoArea>(e_out, &mvdata, &mvvar, &mvfn, &mvcs, &bss);
-    mvtext_area = make_unique<TextArea>(e_out, &mvtext);
+    mvinfo_area = make_unique<InfoArea>(e_out, fpic, &mvdata, &mvvar, &mvfn, &mvcs, &bss);
+    mvtext_area = make_unique<TextArea>(e_out, fpic, &mvtext);
 
     /* Copy & find area segments */
     size_t phdr_num;
@@ -341,6 +343,8 @@ void Bintail::init_write(const char *outfile) {
             if ((scn_out = elf_newscn(e_out)) == nullptr)
                 errx(1, "elf_newscn failed.");
         }
+        if (scn_in == reloc_scn_in)
+            reloc_scn_out = scn_out;
 
         /* Copy scn shdr & data */
         gelf_getshdr(scn_in, &shdr_in);
@@ -378,12 +382,6 @@ void Bintail::write() {
         //elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
     }
 
-    /* Fill new ehdr */
-    GElf_Ehdr ehdr_in, ehdr_out;
-    gelf_getehdr(e_in, &ehdr_in);
-    gelf_getehdr(e_out, &ehdr_out);
-    ehdr_out = ehdr_in;
-    
     // Section table after sections, adjust for bss (growth in mem, 0 in file)
     ehdr_out.e_shoff -= shift;
     gelf_update_ehdr(e_out, &ehdr_out);

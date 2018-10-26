@@ -17,16 +17,18 @@ MVText::MVText(std::byte *buf, size_t size, uint64_t vaddr) {
     copy(buf, buf+size, instr.begin());
 }
 
-size_t MVText::make_info(std::byte *buf, Section* scn, uint64_t vaddr) {
+size_t MVText::make_info(bool fpic, std::byte *buf, Section* scn, uint64_t vaddr) {
     copy(instr.cbegin(), instr.cend(), buf);
-    // Adjust relocations
-    for (auto& r : scn->relocs) {
-        uint64_t orig_target = r.r_addend;
-        uint64_t start = orig_vaddr;
-        uint64_t end = start + instr.size();
-        if (orig_target >= start && orig_target < end) {
-            auto target = orig_target - start + vaddr;
-            r.r_addend = target;
+    if (fpic) {
+        // Adjust relocations
+        for (auto& r : scn->relocs) {
+            uint64_t orig_target = r.r_addend;
+            uint64_t start = orig_vaddr;
+            uint64_t end = start + instr.size();
+            if (orig_target >= start && orig_target < end) {
+                auto target = orig_target - start + vaddr;
+                r.r_addend = target;
+            }
         }
     }
     return instr.size();
@@ -36,12 +38,14 @@ size_t MVText::make_info(std::byte *buf, Section* scn, uint64_t vaddr) {
 MVassign::MVassign(struct mv_info_assignment& _assign)
     :assign{_assign} { }
 
-size_t MVassign::make_info(byte* buf, Section* sec, uint64_t vaddr) {
+size_t MVassign::make_info(bool fpic, byte* buf, Section* sec, uint64_t vaddr) {
     auto ass =  reinterpret_cast<mv_info_assignment*>(buf);
     ass->location = assign.location;
     ass->lower_bound = assign.lower_bound;
     ass->upper_bound = assign.upper_bound;
-    sec->add_rela(vaddr, ass->location);
+    if (fpic) {
+        sec->add_rela(vaddr, ass->location);
+    }
     return sizeof(mv_info_assignment);
 }
 void MVassign::link_var(MVVar* _var) {
@@ -101,7 +105,7 @@ MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, MVDataSection* mvdata, Section* mvtex
 }
 
 /* make mvfn & mvassings */
-size_t MVmvfn::make_info(byte* buf, Section* sec, uint64_t vaddr) {
+size_t MVmvfn::make_info(bool fpic, byte* buf, Section* sec, uint64_t vaddr) {
     auto mfn =  reinterpret_cast<mv_info_mvfn*>(buf);
 
     mfn->function_body = mvfn.function_body;
@@ -110,8 +114,10 @@ size_t MVmvfn::make_info(byte* buf, Section* sec, uint64_t vaddr) {
     mfn->type = mvfn.type;
     mfn->constant = mvfn.constant;
 
-    sec->add_rela(vaddr+offsetof(struct mv_info_mvfn, function_body), mvfn.function_body);
-    sec->add_rela(vaddr+offsetof(struct mv_info_mvfn, assignments), mvfn.assignments);
+    if (fpic) {
+        sec->add_rela(vaddr+offsetof(struct mv_info_mvfn, function_body), mvfn.function_body);
+        sec->add_rela(vaddr+offsetof(struct mv_info_mvfn, assignments), mvfn.assignments);
+    }
     return sizeof(mv_info_mvfn);
 }
 
@@ -119,10 +125,10 @@ void MVmvfn::set_info_assigns(uint64_t vaddr) {
     mvfn.assignments = vaddr;
 }
 
-size_t MVmvfn::make_info_ass(std::byte* buf, Section* scn, uint64_t vaddr) {
+size_t MVmvfn::make_info_ass(bool fpic, std::byte* buf, Section* scn, uint64_t vaddr) {
     auto esz = 0ul;
     for (auto& a : assigns)
-        esz += a->make_info(buf+esz, scn, vaddr+esz);
+        esz += a->make_info(fpic, buf+esz, scn, vaddr+esz);
     return esz;
 }
 
@@ -189,7 +195,7 @@ void MVFn::set_mvfn_vaddr(uint64_t vaddr) {
     mvfn_vaddr = vaddr;
 }
 
-size_t MVFn::make_info(byte* buf, Section* sec, uint64_t vaddr) {
+size_t MVFn::make_info(bool fpic, byte* buf, Section* sec, uint64_t vaddr) {
     auto f = reinterpret_cast<mv_info_fn*>(buf);
     f->name = fn.name;
     f->function_body = fn.function_body;
@@ -197,13 +203,15 @@ size_t MVFn::make_info(byte* buf, Section* sec, uint64_t vaddr) {
     f->mv_functions = mvfn_vaddr;
     f->patchpoints_head = nullptr;
 
-    sec->add_rela(vaddr+offsetof(struct mv_info_fn, name), fn.name);
-    sec->add_rela(vaddr+offsetof(struct mv_info_fn, function_body), fn.function_body);
-    sec->add_rela(vaddr+offsetof(struct mv_info_fn, mv_functions), mvfn_vaddr);
+    if (fpic) {
+        sec->add_rela(vaddr+offsetof(struct mv_info_fn, name), fn.name);
+        sec->add_rela(vaddr+offsetof(struct mv_info_fn, function_body), fn.function_body);
+        sec->add_rela(vaddr+offsetof(struct mv_info_fn, mv_functions), mvfn_vaddr);
+    }
     return sizeof(mv_info_fn);
 }
 
-size_t MVFn::make_mvdata(std::byte* buf, MVDataSection *mvdata, uint64_t vaddr) {
+size_t MVFn::make_mvdata(bool fpic, std::byte* buf, MVDataSection *mvdata, uint64_t vaddr) {
     /*        v-esz                                           v-asz
      * mvfn[3] assigns_mvfn0[] assigns_mvfn1[] assigns_mvfn2[]
      */
@@ -211,8 +219,8 @@ size_t MVFn::make_mvdata(std::byte* buf, MVDataSection *mvdata, uint64_t vaddr) 
     auto asz = sizeof(mv_info_mvfn)*mvfns.size();
     for (auto& m : mvfns) {
         m->set_info_assigns(vaddr+asz);
-        esz += m->make_info(buf+esz, mvdata, vaddr+esz);
-        asz += m->make_info_ass(buf+asz, mvdata, vaddr+asz);
+        esz += m->make_info(fpic, buf+esz, mvdata, vaddr+esz);
+        asz += m->make_info_ass(fpic, buf+asz, mvdata, vaddr+asz);
     }
     return asz;
 }
@@ -308,15 +316,17 @@ void MVVar::print() {
         fn->print();
 }
 
-size_t MVVar::make_info(byte* buf, Section* sec, uint64_t vaddr) {
+size_t MVVar::make_info(bool fpic, byte* buf, Section* sec, uint64_t vaddr) {
     auto v = reinterpret_cast<struct mv_info_var*>(buf);
     v->name = var.name;
     v->variable_location = var.variable_location;
     v->info = var.info;
     v->functions_head = nullptr;
 
-    sec->add_rela(vaddr+offsetof(struct mv_info_var, name), var.name);
-    sec->add_rela(vaddr+offsetof(struct mv_info_var, variable_location), var.variable_location);
+    if (fpic) {
+        sec->add_rela(vaddr+offsetof(struct mv_info_var, name), var.name);
+        sec->add_rela(vaddr+offsetof(struct mv_info_var, variable_location), var.variable_location);
+    }
     return sizeof(struct mv_info_var);
 }
 
@@ -363,12 +373,14 @@ MVPP::MVPP(struct mv_info_callsite& cs, Section* text, Section* mvtext) {
     decode_callsite(cs, (text->inside(cs.call_label) ? text : mvtext));
 }
 
-size_t MVPP::make_info(byte* buf, Section* sec, uint64_t vaddr) {
+size_t MVPP::make_info(bool fpic, byte* buf, Section* sec, uint64_t vaddr) {
     auto cs = reinterpret_cast<mv_info_callsite*>(buf);
     cs->function_body = function_body;
     cs->call_label = pp.location;
-    sec->add_rela(vaddr+offsetof(struct mv_info_callsite, function_body), function_body);
-    sec->add_rela(vaddr+offsetof(struct mv_info_callsite, call_label), pp.location);
+    if (fpic) {
+        sec->add_rela(vaddr+offsetof(struct mv_info_callsite, function_body), function_body);
+        sec->add_rela(vaddr+offsetof(struct mv_info_callsite, call_label), pp.location);
+    }
     return sizeof(mv_info_callsite);
 }
 

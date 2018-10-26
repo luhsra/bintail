@@ -16,8 +16,9 @@
 using namespace std;
 
 //------------------Area---------------------------------------
-Area::Area(Elf *_e_out) {
+Area::Area(Elf *_e_out, bool _fpic) {
     e_out = _e_out;
+    fpic = _fpic;
 }
 
 void Area::set_phdr(GElf_Phdr &_phdr, const size_t &_ndx) {
@@ -31,8 +32,8 @@ void Area::set_phdr(GElf_Phdr &_phdr, const size_t &_ndx) {
 }
 
 //-----------------TextArea---------------------------------------
-TextArea::TextArea(Elf *e_out, Section *_mvtext) :
-    Area(e_out) {
+TextArea::TextArea(Elf *e_out, bool fpic, Section *_mvtext) :
+    Area(e_out, fpic) {
     mvtext = _mvtext;
 }
 
@@ -59,9 +60,9 @@ uint64_t TextArea::size_in_file() {
 }
 
 //------------------InfoArea---------------------------------------
-InfoArea::InfoArea(Elf *e_out, MVDataSection *_mvdata, MVVarSection *_mvvar,
+InfoArea::InfoArea(Elf *e_out, bool fpic, MVDataSection *_mvdata, MVVarSection *_mvvar,
         MVFnSection *_mvfn, MVCsSection *_mvcs, BssSection *_bss) :
-    Area(e_out) {
+    Area(e_out, fpic) {
     mvdata = _mvdata;
     mvvar = _mvvar;
     mvfn =  _mvfn;
@@ -103,19 +104,15 @@ uint64_t InfoArea::generate(
     std::vector<std::unique_ptr<MVFn>> &fns,
     std::vector<std::unique_ptr<MVPP>> &pps,
     Section *data) {
-    /* ToDo(Felix):
-     * this function should only relocate the exsisting sections,
-     * generation should happen in the section method.
-     */
     auto area_pos = 0ul;
 
-    area_pos += mvdata->generate(
+    area_pos += mvdata->generate(fpic,
             fns, area_offset_start+area_pos, area_vaddr_start+area_pos);
-    area_pos += mvfn->generate(
+    area_pos += mvfn->generate(fpic,
             fns, area_offset_start+area_pos, area_vaddr_start+area_pos, data);
-    area_pos += mvvar->generate(
+    area_pos += mvvar->generate(fpic,
             vars, area_offset_start+area_pos, area_vaddr_start+area_pos, data);
-    area_pos += mvcs->generate(
+    area_pos += mvcs->generate(fpic,
             pps, area_offset_start+area_pos, area_vaddr_start+area_pos, data);
 
     /* Shift and expand .bss in mem, move to end in file */
@@ -155,7 +152,7 @@ std::unique_ptr<std::vector<struct mv_info_fn>> MVFnSection::read() {
     return v;
 }
 
-uint64_t MVFnSection::generate(std::vector<std::unique_ptr<MVFn>> &fns,
+uint64_t MVFnSection::generate(bool fpic, std::vector<std::unique_ptr<MVFn>> &fns,
         uint64_t offset, uint64_t vaddr, Section *data) {
     relocs.clear();
     auto ndx = 0;
@@ -168,7 +165,7 @@ uint64_t MVFnSection::generate(std::vector<std::unique_ptr<MVFn>> &fns,
         for (auto& e:fns) {
             if (e->is_fixed())
                 continue;
-            ndx += e->make_info(buf+ndx, this, vaddr+ndx);
+            ndx += e->make_info(fpic, buf+ndx, this, vaddr+ndx);
         }
         data->d_size = ndx;
         elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
@@ -186,8 +183,8 @@ uint64_t MVFnSection::generate(std::vector<std::unique_ptr<MVFn>> &fns,
     }
     
     /* start/stop_ptr for libmultiverse */
-    data->write_ptr(start_ptr, vaddr);
-    data->write_ptr(stop_ptr, vaddr+ndx);
+    data->write_ptr(fpic, start_ptr, vaddr);
+    data->write_ptr(fpic, stop_ptr, vaddr+ndx);
     return ndx;
 }
 
@@ -210,7 +207,7 @@ std::unique_ptr<std::vector<struct mv_info_var>> MVVarSection::read() {
     return v;
 }
 
-uint64_t MVVarSection::generate(std::vector<std::shared_ptr<MVVar>> &vars,
+uint64_t MVVarSection::generate(bool fpic, std::vector<std::shared_ptr<MVVar>> &vars,
         uint64_t offset, uint64_t vaddr, Section *data) {
     relocs.clear();
     auto ndx = 0;
@@ -223,7 +220,7 @@ uint64_t MVVarSection::generate(std::vector<std::shared_ptr<MVVar>> &vars,
         for (auto& e:vars) {
             if (e->frozen)
                 continue;
-            ndx += e->make_info(buf+ndx, this, vaddr+ndx);
+            ndx += e->make_info(fpic, buf+ndx, this, vaddr+ndx);
         }
         data->d_size = ndx;
         elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
@@ -241,8 +238,8 @@ uint64_t MVVarSection::generate(std::vector<std::shared_ptr<MVVar>> &vars,
     }
     
     /* start/stop_ptr for libmultiverse */
-    data->write_ptr(start_ptr, vaddr);
-    data->write_ptr(stop_ptr, vaddr+ndx);
+    data->write_ptr(fpic, start_ptr, vaddr);
+    data->write_ptr(fpic, stop_ptr, vaddr+ndx);
     return ndx;
 }
 
@@ -265,7 +262,7 @@ std::unique_ptr<std::vector<struct mv_info_callsite>> MVCsSection::read() {
     return v;
 }
 
-uint64_t MVCsSection::generate(std::vector<std::unique_ptr<MVPP>> &pps,
+uint64_t MVCsSection::generate(bool fpic, std::vector<std::unique_ptr<MVPP>> &pps,
         uint64_t offset, uint64_t vaddr, Section *data) {
     relocs.clear();
     auto ndx = 0;
@@ -277,7 +274,7 @@ uint64_t MVCsSection::generate(std::vector<std::unique_ptr<MVPP>> &pps,
         for (auto& e:pps) {
             if ( e->_fn->is_fixed() || e->pp.type == PP_TYPE_X86_JUMP)
                 continue;
-            ndx += e->make_info(buf+ndx, this, vaddr+ndx);
+            ndx += e->make_info(fpic, buf+ndx, this, vaddr+ndx);
         }
         data->d_size = ndx;
         elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
@@ -295,13 +292,13 @@ uint64_t MVCsSection::generate(std::vector<std::unique_ptr<MVPP>> &pps,
     }
     
     /* start/stop_ptr for libmultiverse */
-    data->write_ptr(start_ptr, vaddr);
-    data->write_ptr(stop_ptr, vaddr+ndx);
+    data->write_ptr(fpic, start_ptr, vaddr);
+    data->write_ptr(fpic, stop_ptr, vaddr+ndx);
     return ndx;
 }
 
 //------------------MVDataSection--------------------------------
-uint64_t MVDataSection::generate(std::vector<std::unique_ptr<MVFn>> &fns,
+uint64_t MVDataSection::generate(bool fpic, std::vector<std::unique_ptr<MVFn>> &fns,
         uint64_t offset, uint64_t vaddr) {
     relocs.clear();
     if (scn_out == nullptr) { // no data -> section not needed
@@ -317,7 +314,7 @@ uint64_t MVDataSection::generate(std::vector<std::unique_ptr<MVFn>> &fns,
         if (e->is_fixed())
             continue;
         e->set_mvfn_vaddr(vaddr + ndx);
-        ndx += e->make_mvdata(buf+ndx, this, vaddr+ndx);
+        ndx += e->make_mvdata(fpic, buf+ndx, this, vaddr+ndx);
     }
     data->d_size = ndx;
     elf_flagdata(data, ELF_C_SET, ELF_F_DIRTY);
@@ -459,7 +456,7 @@ bool Section::probe_rela(GElf_Rela *rela) {
     return claim;
 }
 
-void Section::write_ptr(uint64_t address, uint64_t destination) {
+void Section::write_ptr(bool fpic, uint64_t address, uint64_t destination) {
     GElf_Shdr shdr;
     gelf_getshdr(scn_out, &shdr);
     auto d = elf_getdata(scn_out, nullptr);
@@ -474,7 +471,9 @@ void Section::write_ptr(uint64_t address, uint64_t destination) {
     auto dest = reinterpret_cast<uint64_t*>(buf+off);
 
     *dest = destination;
-    add_rela(address, destination);
+    if (fpic) {
+        add_rela(address, destination);
+    }
 }
 
 bool Section::is_needed() {

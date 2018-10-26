@@ -11,9 +11,9 @@
 
 typedef enum {false, true} bool;
 
-__attribute__((multiverse)) bool config_first = false;
-__attribute__((multiverse)) bool config_second = true;
-__attribute__((multiverse)) bool config_third = false;
+__attribute__((multiverse, section(".data"))) bool config_first = false;
+__attribute__((multiverse, section(".data"))) bool config_second = true;
+__attribute__((multiverse, section(".data"))) bool config_third = false;
 
 void __attribute__((multiverse)) func_first()
 {
