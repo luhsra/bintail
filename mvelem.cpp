@@ -272,22 +272,29 @@ void MVFn::print() {
 MVVar::MVVar(struct mv_info_var _var, Section* rodata, Section* data)
         :frozen{false}, var{_var} {
     _name = rodata->get_string(var.name);
-    //ignores signed
-    switch (var.variable_width) {
-        case 1:
-            _value = reinterpret_cast<const uint8_t*>(data->in_buf(var.variable_location))[0];
-            break;
-        case 2:
-            _value = reinterpret_cast<const uint16_t*>(data->in_buf(var.variable_location))[0];
-            break;
-        case 4:
-            _value = reinterpret_cast<const uint32_t*>(data->in_buf(var.variable_location))[0];
-            break;
-        case 8:
-            _value = reinterpret_cast<const uint64_t*>(data->in_buf(var.variable_location))[0];
-            break;
-        default:
-            throw std::runtime_error("Unexpected variable_witdh.\n");
+    in_data = (data->inside(var.variable_location));
+
+    if (in_data) {
+        //ignores signed
+        switch (var.variable_width) {
+            case 1:
+                _value = reinterpret_cast<const uint8_t*>(data->in_buf(var.variable_location))[0];
+                break;
+            case 2:
+                _value = reinterpret_cast<const uint16_t*>(data->in_buf(var.variable_location))[0];
+                break;
+            case 4:
+                _value = reinterpret_cast<const uint32_t*>(data->in_buf(var.variable_location))[0];
+                break;
+            case 8:
+                _value = reinterpret_cast<const uint64_t*>(data->in_buf(var.variable_location))[0];
+                break;
+            default:
+                throw std::runtime_error("Unexpected variable_witdh.\n");
+        }
+    } else {
+        _value = 0;
+        cout << "Warning: Set var not in file\n";
     }
 }
 
@@ -319,9 +326,11 @@ void MVVar::link_fn(MVFn* fn) {
 
 void MVVar::set_value(int v, Section* data) {
     _value = v;
-    assert(var.variable_width == 4); 
-    auto b = reinterpret_cast<int32_t*>(data->out_buf(var.variable_location));
-    b[0] = v;
+    if (in_data) {
+        assert(var.variable_width == 4); 
+        auto b = reinterpret_cast<int32_t*>(data->out_buf(var.variable_location));
+        b[0] = v;
+    }
 }
 
 uint64_t MVVar::location() {
@@ -330,8 +339,8 @@ uint64_t MVVar::location() {
 
 void MVVar::apply(Section* text, Section* mvtext, bool guard) {
     frozen = true;
-    for (auto& e : fns)
-        e->apply(text, mvtext, guard);
+    for (auto& f : fns)
+        f->apply(text, mvtext, guard);
 }
 
 //---------------------MVPP---------------------------------------------------

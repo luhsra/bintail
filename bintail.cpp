@@ -201,9 +201,9 @@ void Bintail::change(string change_str) {
     regex_search(change_str, m, regex(R"((\w+)=(\d+))"));
     auto var_name = m.str(1);
     auto value = stoi(m.str(2));
-    for (auto& e : vars)
-        if (var_name == e->name())
-            e->set_value(value, &data);
+    for (auto& v : vars)
+        if (var_name == v->name())
+            v->set_value(value, &data);
 }
 
 /**
@@ -220,8 +220,8 @@ void Bintail::apply(string change_str, bool guard) {
 }
 
 void Bintail::apply_all(bool guard) {
-    for (auto& e : vars)
-        e->apply(&text, &mvtext, guard);
+    for (auto& v : vars)
+        v->apply(&text, &mvtext, guard);
 }
 
 /**

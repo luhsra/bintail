@@ -168,10 +168,11 @@ public:
 
     bool frozen;
     struct mv_info_var var;
+    bool in_data;
+    int64_t _value;
 private:
     std::set<MVFn*> fns;
     std::string _name;
-    int64_t _value;
 };
 
 //-----------------------------------------------------------------------------

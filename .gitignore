@@ -7,7 +7,7 @@ samples/no-lib
 samples/commit
 bintail
 edit
-test
+test*
 before.txt
 after.txt
 glibc-elf
