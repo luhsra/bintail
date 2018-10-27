@@ -81,28 +81,40 @@ public:
 class MVFnSection : public MVSection {
 public:
     std::unique_ptr<std::vector<struct mv_info_fn>> read();
-    uint64_t generate(bool fpic, std::vector<std::unique_ptr<MVFn>> &fns,
-        uint64_t offset, uint64_t vaddr, Section *data);
+    uint64_t generate(bool fpic, uint64_t offset, uint64_t vaddr, Section *data);
+    bool is_needed();
+    void set_fns(std::vector<std::unique_ptr<MVFn>> *fns);
+private:
+    std::vector<std::unique_ptr<MVFn>> *fns;
 };
 
 class MVVarSection : public MVSection {
 public:
     std::unique_ptr<std::vector<struct mv_info_var>> read();
-    uint64_t generate(bool fpic, std::vector<std::shared_ptr<MVVar>> &vars,
-        uint64_t offset, uint64_t vaddr, Section *data);
+    uint64_t generate(bool fpic, uint64_t offset, uint64_t vaddr, Section *data);
+    bool is_needed();
+    void set_vars(std::vector<std::shared_ptr<MVVar>> *vars);
+private:
+    std::vector<std::shared_ptr<MVVar>> *vars;
 };
 
 class MVCsSection : public MVSection {
 public:
     std::unique_ptr<std::vector<struct mv_info_callsite>> read();
-    uint64_t generate(bool fpic, std::vector<std::unique_ptr<MVPP>> &pps,
-        uint64_t offset, uint64_t vaddr, Section *data);
+    uint64_t generate(bool fpic, uint64_t offset, uint64_t vaddr, Section *data);
+    bool is_needed();
+    void set_pps(std::vector<std::unique_ptr<MVPP>> *pps);
+private:
+    std::vector<std::unique_ptr<MVPP>> *pps;
 };
 
 class MVDataSection : public MVSection {
 public:
-    uint64_t generate(bool fpic, std::vector<std::unique_ptr<MVFn>> &fns,
-        uint64_t offset, uint64_t vaddr);
+    uint64_t generate(bool fpic, uint64_t offset, uint64_t vaddr);
+    bool is_needed();
+    void set_fns(std::vector<std::unique_ptr<MVFn>> *fns);
+private:
+    std::vector<std::unique_ptr<MVFn>> *fns;
 };
 
 class Dynamic : public Section {
@@ -110,7 +122,7 @@ public:
     void load(Elf_Scn *scn_in);
     void write();
     void print();
-    GElf_Dyn* get_dyn(int64_t tag);
+    std::optional<GElf_Dyn*> get_dyn(int64_t tag);
 private:
     std::vector<std::unique_ptr<GElf_Dyn>> dyns;
 };
@@ -156,11 +168,7 @@ class InfoArea : public Area {
 public:
     InfoArea(Elf *e_out, bool fpic, MVDataSection *mvdata, MVVarSection *mvvar, 
             MVFnSection *mvfn, MVCsSection *mvcs, BssSection *bss);
-    uint64_t generate(
-        std::vector<std::shared_ptr<MVVar>> &vars,
-        std::vector<std::unique_ptr<MVFn>> &fns,
-        std::vector<std::unique_ptr<MVPP>> &pps,
-        Section *data);
+    uint64_t generate(Section *data);
     void find_start_of_area();
     bool test_phdr(GElf_Phdr &phdr);
     uint64_t size_in_file();
@@ -239,6 +247,8 @@ private:
     Elf_Scn *reloc_scn_out;
 
     Elf_Scn *symtab_scn;
+
+    uint removed_scns;
 
     std::vector<struct sec> secs;
     std::map<Elf_Scn*, Section*> scn_handler;

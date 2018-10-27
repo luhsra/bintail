@@ -99,25 +99,16 @@ void InfoArea::find_start_of_area() {
  * InfoAREA:
  * [ ... | mvdata | mvfn | mvvar | mvcs | .bss ]
  */
-uint64_t InfoArea::generate(
-    std::vector<std::shared_ptr<MVVar>> &vars,
-    std::vector<std::unique_ptr<MVFn>> &fns,
-    std::vector<std::unique_ptr<MVPP>> &pps,
-    Section *data) {
+uint64_t InfoArea::generate(Section *data) {
     auto area_pos = 0ul;
 
-    area_pos += mvdata->generate(fpic,
-            fns, area_offset_start+area_pos, area_vaddr_start+area_pos);
-    area_pos += mvfn->generate(fpic,
-            fns, area_offset_start+area_pos, area_vaddr_start+area_pos, data);
-    area_pos += mvvar->generate(fpic,
-            vars, area_offset_start+area_pos, area_vaddr_start+area_pos, data);
-    area_pos += mvcs->generate(fpic,
-            pps, area_offset_start+area_pos, area_vaddr_start+area_pos, data);
+    area_pos += mvdata->generate(fpic, area_offset_start+area_pos, area_vaddr_start+area_pos);
+    area_pos += mvfn->generate(fpic, area_offset_start+area_pos, area_vaddr_start+area_pos, data);
+    area_pos += mvvar->generate(fpic, area_offset_start+area_pos, area_vaddr_start+area_pos, data);
+    area_pos += mvcs->generate(fpic, area_offset_start+area_pos, area_vaddr_start+area_pos, data);
 
     /* Shift and expand .bss in mem, move to end in file */
-    auto shift = bss->generate(area_offset_start + area_pos,
-            area_vaddr_start + area_pos, area_vaddr_end);
+    auto shift = bss->generate(area_offset_start + area_pos, area_vaddr_start + area_pos, area_vaddr_end);
 
     /* Shrink Segment */
     phdr.p_filesz -= shift;
@@ -152,8 +143,7 @@ std::unique_ptr<std::vector<struct mv_info_fn>> MVFnSection::read() {
     return v;
 }
 
-uint64_t MVFnSection::generate(bool fpic, std::vector<std::unique_ptr<MVFn>> &fns,
-        uint64_t offset, uint64_t vaddr, Section *data) {
+uint64_t MVFnSection::generate(bool fpic, uint64_t offset, uint64_t vaddr, Section *data) {
     relocs.clear();
     auto ndx = 0;
     /* no data -> section not needed */
@@ -162,7 +152,7 @@ uint64_t MVFnSection::generate(bool fpic, std::vector<std::unique_ptr<MVFn>> &fn
         auto data = elf_getdata(scn_out, nullptr);
         auto buf = static_cast<byte*>(data->d_buf);
 
-        for (auto& e:fns) {
+        for (auto& e:*fns) {
             if (e->is_fixed())
                 continue;
             ndx += e->make_info(fpic, buf+ndx, this, vaddr+ndx);
@@ -188,6 +178,14 @@ uint64_t MVFnSection::generate(bool fpic, std::vector<std::unique_ptr<MVFn>> &fn
     return ndx;
 }
 
+bool MVFnSection::is_needed() {
+    return fns->empty();
+}
+
+void MVFnSection::set_fns(std::vector<std::unique_ptr<MVFn>> *_fns) {
+    fns = _fns;
+}
+
 //-----------------MVVarSection-------------------------------
 std::unique_ptr<std::vector<struct mv_info_var>> MVVarSection::read() {
     auto v = std::make_unique<std::vector<struct mv_info_var>>();
@@ -207,8 +205,7 @@ std::unique_ptr<std::vector<struct mv_info_var>> MVVarSection::read() {
     return v;
 }
 
-uint64_t MVVarSection::generate(bool fpic, std::vector<std::shared_ptr<MVVar>> &vars,
-        uint64_t offset, uint64_t vaddr, Section *data) {
+uint64_t MVVarSection::generate(bool fpic, uint64_t offset, uint64_t vaddr, Section *data) {
     relocs.clear();
     auto ndx = 0;
 
@@ -217,7 +214,7 @@ uint64_t MVVarSection::generate(bool fpic, std::vector<std::shared_ptr<MVVar>> &
         auto data = elf_getdata(scn_out, nullptr);
         auto buf = static_cast<byte*>(data->d_buf);
 
-        for (auto& e:vars) {
+        for (auto& e:*vars) {
             if (e->frozen)
                 continue;
             ndx += e->make_info(fpic, buf+ndx, this, vaddr+ndx);
@@ -243,6 +240,13 @@ uint64_t MVVarSection::generate(bool fpic, std::vector<std::shared_ptr<MVVar>> &
     return ndx;
 }
 
+bool MVVarSection::is_needed() {
+    return vars->empty();
+}
+
+void MVVarSection::set_vars(std::vector<std::shared_ptr<MVVar>> *_vars) {
+    vars = _vars;
+}
 //-----------------MVCsSection-------------------------------
 std::unique_ptr<std::vector<struct mv_info_callsite>> MVCsSection::read() {
     auto v = std::make_unique<std::vector<struct mv_info_callsite>>();
@@ -262,8 +266,7 @@ std::unique_ptr<std::vector<struct mv_info_callsite>> MVCsSection::read() {
     return v;
 }
 
-uint64_t MVCsSection::generate(bool fpic, std::vector<std::unique_ptr<MVPP>> &pps,
-        uint64_t offset, uint64_t vaddr, Section *data) {
+uint64_t MVCsSection::generate(bool fpic, uint64_t offset, uint64_t vaddr, Section *data) {
     relocs.clear();
     auto ndx = 0;
     if (scn_out != nullptr) { // no data -> section not needed
@@ -271,7 +274,7 @@ uint64_t MVCsSection::generate(bool fpic, std::vector<std::unique_ptr<MVPP>> &pp
         auto data = elf_getdata(scn_out, nullptr);
         auto buf = static_cast<byte*>(data->d_buf);
 
-        for (auto& e:pps) {
+        for (auto& e:*pps) {
             if ( e->_fn->is_fixed() || e->pp.type == PP_TYPE_X86_JUMP)
                 continue;
             ndx += e->make_info(fpic, buf+ndx, this, vaddr+ndx);
@@ -297,9 +300,15 @@ uint64_t MVCsSection::generate(bool fpic, std::vector<std::unique_ptr<MVPP>> &pp
     return ndx;
 }
 
+bool MVCsSection::is_needed() {
+    return pps->empty();
+}
+
+void MVCsSection::set_pps(std::vector<std::unique_ptr<MVPP>> *_pps) {
+    pps = _pps;
+}
 //------------------MVDataSection--------------------------------
-uint64_t MVDataSection::generate(bool fpic, std::vector<std::unique_ptr<MVFn>> &fns,
-        uint64_t offset, uint64_t vaddr) {
+uint64_t MVDataSection::generate(bool fpic, uint64_t offset, uint64_t vaddr) {
     relocs.clear();
     if (scn_out == nullptr) { // no data -> section not needed
         return 0;
@@ -310,7 +319,7 @@ uint64_t MVDataSection::generate(bool fpic, std::vector<std::unique_ptr<MVFn>> &
     auto buf = static_cast<byte*>(data->d_buf);
 
     auto ndx = 0;
-    for (auto& e:fns) {
+    for (auto& e:*fns) {
         if (e->is_fixed())
             continue;
         e->set_mvfn_vaddr(vaddr + ndx);
@@ -334,6 +343,13 @@ uint64_t MVDataSection::generate(bool fpic, std::vector<std::unique_ptr<MVFn>> &
     return ndx;
 }
 
+bool MVDataSection::is_needed() {
+    return fns->empty();
+}
+
+void MVDataSection::set_fns(std::vector<std::unique_ptr<MVFn>> *_fns) {
+    fns = _fns;
+}
 //------------------BssSection---------------------------------
 uint64_t BssSection::generate(uint64_t offset, uint64_t vaddr_start, uint64_t vaddr_end) {
     /* shdr */
@@ -387,13 +403,13 @@ void Dynamic::print() {
     }
 }
 
-GElf_Dyn* Dynamic::get_dyn(int64_t tag) {
+std::optional<GElf_Dyn*> Dynamic::get_dyn(int64_t tag) {
     auto it = find_if(dyns.begin(), dyns.end(), [&tag](auto& d) {
             return d->d_tag == tag; });
     if (it != dyns.end())
         return (*it).get();
     else
-        return nullptr;
+        return {};
 }
 
 void Dynamic::write() {

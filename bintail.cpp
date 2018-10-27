@@ -259,10 +259,14 @@ void Bintail::update_relocs_sym() {
     shdr.sh_size = i * sizeof(GElf_Rela);
     d->d_size = shdr.sh_size;
 
-    auto dyn_relacount = dynamic.get_dyn(DT_RELACOUNT);
-    auto dyn_relasz = dynamic.get_dyn(DT_RELASZ);
-    dyn_relacount->d_un.d_val = cnt;
+    auto dyn_relasz = dynamic.get_dyn(DT_RELASZ).value();
     dyn_relasz->d_un.d_val = shdr.sh_size;
+
+    auto dyn_relacount = dynamic.get_dyn(DT_RELACOUNT);
+    if (dyn_relacount.has_value()) {
+        auto relacount = dyn_relacount.value();
+        relacount->d_un.d_val = cnt;
+    }
 
     // SYMS
     i = 0;
@@ -298,6 +302,11 @@ void Bintail::init_write(const char *outfile) {
     ehdr_out = ehdr_in;
     bool fpic = (ehdr_in.e_type == ET_DYN);
 
+    /* MV Sections */
+    mvdata.set_fns(&fns);
+    mvfn.set_fns(&fns);
+    mvvar.set_vars(&vars);
+    mvcs.set_pps(&pps);
     /* MV Areas */
     mvinfo_area = make_unique<InfoArea>(e_out, fpic, &mvdata, &mvvar, &mvfn, &mvcs, &bss);
     mvtext_area = make_unique<TextArea>(e_out, fpic, &mvtext);
@@ -329,13 +338,16 @@ void Bintail::init_write(const char *outfile) {
     Elf_Data *data_in, *data_out;
     GElf_Shdr shdr_in, shdr_out;
     size_t shstrndx;
+    removed_scns = 0;
     elf_getshdrstrndx(e_in, &shstrndx);
     while((scn_in = elf_nextscn(e_in, scn_in)) != nullptr) {
         auto it = scn_handler.find(scn_in);
         if (it != scn_handler.end()) {
             auto sec = it->second;
-            if (sec->is_needed() == false)
+            if (sec->is_needed() == false) {
+                removed_scns++;
                 continue;
+            }
             if ((scn_out = elf_newscn(e_out)) == nullptr)
                 errx(1, "elf_newscn failed.");
             sec->set_out_scn(scn_out);
@@ -350,6 +362,8 @@ void Bintail::init_write(const char *outfile) {
         gelf_getshdr(scn_in, &shdr_in);
         gelf_getshdr(scn_out, &shdr_out);
         shdr_out = shdr_in;
+        if (removed_scns != 0 && shdr_in.sh_link > 0)
+            shdr_out.sh_link -= removed_scns;
         gelf_update_shdr(scn_out, &shdr_out);
 
         data_in = elf_getdata(scn_in, nullptr);
@@ -360,7 +374,7 @@ void Bintail::init_write(const char *outfile) {
 }
 
 void Bintail::write() {
-    mvinfo_area->generate(vars, fns, pps, &data);
+    mvinfo_area->generate(&data);
 
     update_relocs_sym();
     dynamic.write();
@@ -382,6 +396,8 @@ void Bintail::write() {
         //elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
     }
 
+    ehdr_out.e_shstrndx -= removed_scns;
+    ehdr_out.e_shnum -= removed_scns;
     // Section table after sections, adjust for bss (growth in mem, 0 in file)
     ehdr_out.e_shoff -= shift;
     gelf_update_ehdr(e_out, &ehdr_out);

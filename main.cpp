@@ -56,6 +56,7 @@ int main(int argc, char *argv[]) {
                  << "-A             Apply all variables.\n"
                  << "-d             Display multiverse configuration.\n"
                  << "-h             Print help.\n"
+                 << "-g             Guard unused code.\n"
                  << "-l             Show dynamic info.\n"
                  << "-r             Dump mvrelocs.\n"
                  << "-s var=value   Set variable to value.\n"

@@ -1,9 +1,6 @@
 #!/usr/bin/zsh
 set -e
 
-mkdir -p _tmp
-cd _tmp
-
 test_flags() {
     echo "============================================================="
     echo "   TEST:  $1"
@@ -11,18 +8,16 @@ test_flags() {
     FLAGS=(${(@s/ /)1})
     for i in $@[2,-1]
     do
-        echo "-> $i"
-        cp $i edit
-        ../bintail -f edit -dylr > before.txt
-        ../bintail -f edit $FLAGS > out.txt
-        ../bintail -f edit -dylr > after.txt
-        ./edit > prog.txt
+        echo " --- bintail ---"
+        ./bintail $FLAGS $i test-`basename $i`
+        echo " --- command ---"
+        ./test-`basename $i`
     done
 }
 
-samples=( `ls ../samples/*.c | sed 's/\.c$//'` ../ash)
+samples=( `ls samples/*.c | sed 's/\.c$//'` samples/grep)
 echo "Samples: $samples"
 
-test_flags "-a config_first -w -g -t" $samples
-test_flags "-s config_first=0 -w -g -t" $samples
-test_flags "-a config_first -w -g -t" $samples
+test_flags "-d" $samples
+test_flags "-a config_first -g" $samples
+test_flags "-A -g" $samples
