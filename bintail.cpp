@@ -289,7 +289,7 @@ void Bintail::update_relocs_sym() {
 }
 
 /* Create file until MVInfo data */
-void Bintail::init_write(const char *outfile) {
+void Bintail::init_write(const char *outfile, bool apply_all) {
     if ((outfd = open(outfile, O_WRONLY|O_CREAT, S_IRUSR|S_IWUSR|S_IXUSR)) == -1) 
         errx(1, "open %s failed. %s", outfile, strerror(errno));
     if ((e_out = elf_begin(outfd, ELF_C_WRITE, NULL)) == nullptr)
@@ -341,10 +341,11 @@ void Bintail::init_write(const char *outfile) {
     removed_scns = 0;
     elf_getshdrstrndx(e_in, &shstrndx);
     while((scn_in = elf_nextscn(e_in, scn_in)) != nullptr) {
+        gelf_getshdr(scn_in, &shdr_in);
         auto it = scn_handler.find(scn_in);
         if (it != scn_handler.end()) {
             auto sec = it->second;
-            if (sec->is_needed() == false) {
+            if (sec->is_needed(apply_all == false) == false) {
                 removed_scns++;
                 continue;
             }
@@ -359,7 +360,6 @@ void Bintail::init_write(const char *outfile) {
             reloc_scn_out = scn_out;
 
         /* Copy scn shdr & data */
-        gelf_getshdr(scn_in, &shdr_in);
         gelf_getshdr(scn_out, &shdr_out);
         shdr_out = shdr_in;
         if (removed_scns != 0 && shdr_in.sh_link > 0)

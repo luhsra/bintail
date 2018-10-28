@@ -178,8 +178,8 @@ uint64_t MVFnSection::generate(bool fpic, uint64_t offset, uint64_t vaddr, Secti
     return ndx;
 }
 
-bool MVFnSection::is_needed() {
-    return fns->empty();
+bool MVFnSection::is_needed(bool overr) {
+    return overr;
 }
 
 void MVFnSection::set_fns(std::vector<std::unique_ptr<MVFn>> *_fns) {
@@ -240,8 +240,8 @@ uint64_t MVVarSection::generate(bool fpic, uint64_t offset, uint64_t vaddr, Sect
     return ndx;
 }
 
-bool MVVarSection::is_needed() {
-    return vars->empty();
+bool MVVarSection::is_needed(bool overr) {
+    return overr;
 }
 
 void MVVarSection::set_vars(std::vector<std::shared_ptr<MVVar>> *_vars) {
@@ -300,8 +300,8 @@ uint64_t MVCsSection::generate(bool fpic, uint64_t offset, uint64_t vaddr, Secti
     return ndx;
 }
 
-bool MVCsSection::is_needed() {
-    return pps->empty();
+bool MVCsSection::is_needed(bool overr) {
+    return overr;
 }
 
 void MVCsSection::set_pps(std::vector<std::unique_ptr<MVPP>> *_pps) {
@@ -343,8 +343,8 @@ uint64_t MVDataSection::generate(bool fpic, uint64_t offset, uint64_t vaddr) {
     return ndx;
 }
 
-bool MVDataSection::is_needed() {
-    return fns->empty();
+bool MVDataSection::is_needed(bool overr) {
+    return overr;
 }
 
 void MVDataSection::set_fns(std::vector<std::unique_ptr<MVFn>> *_fns) {
@@ -492,7 +492,8 @@ void Section::write_ptr(bool fpic, uint64_t address, uint64_t destination) {
     }
 }
 
-bool Section::is_needed() {
+bool Section::is_needed(bool overr) {
+    (void) overr;
     return true;
 }
 

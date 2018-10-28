@@ -262,7 +262,7 @@ void MVFn::probe_sym(struct symbol &sym) {
 
 void MVFn::print() {
     cout << (active == fn.function_body ? " -> " : "    ")
-         << name << " @0x" << hex << fn.function_body << ":0x" << symbol.sym.st_size
+         << name << "@0x" << hex << fn.function_body << ":0x" << symbol.sym.st_size
          << "  -  mvfn[] @0x" << fn.mv_functions<< "\n";
 
     for (auto &mvfn : mvfns) {
@@ -298,16 +298,16 @@ MVVar::MVVar(struct mv_info_var _var, Section* rodata, Section* data)
                 _value = reinterpret_cast<const uint64_t*>(data->in_buf(var.variable_location))[0];
                 break;
             default:
-                throw std::runtime_error("Unexpected variable_witdh.\n");
+                throw std::runtime_error("Unexpected variable_width.\n");
         }
     } else {
         _value = 0;
-        cout << "Warning: Set var not in file\n";
+        cout << "Warning: Variable " << _name << " is uninitialized.\n";
     }
 }
 
 void MVVar::print() {
-    cout << "Var: " << _name << "@:0x" << location() << "\n"
+    cout << "Var: " << _name << "@0x" << location() << "\n"
          << "\twidth=" << var.variable_width  << " flags=[ "
          << (var.flag_tracked ? "tracked " : "")
          << (var.flag_signed ? "signed " : "" )

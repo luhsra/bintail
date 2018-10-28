@@ -49,7 +49,7 @@ public:
     const std::byte* in_buf(uint64_t addr);
     void write_ptr(bool fpic, uint64_t address, uint64_t destination);
 
-    virtual bool is_needed();      // (in outfile)
+    virtual bool is_needed(bool overr);      // (in outfile)
     
     void set_out_scn(Elf_Scn *scn_out);
 
@@ -82,7 +82,7 @@ class MVFnSection : public MVSection {
 public:
     std::unique_ptr<std::vector<struct mv_info_fn>> read();
     uint64_t generate(bool fpic, uint64_t offset, uint64_t vaddr, Section *data);
-    bool is_needed();
+    bool is_needed(bool overr);
     void set_fns(std::vector<std::unique_ptr<MVFn>> *fns);
 private:
     std::vector<std::unique_ptr<MVFn>> *fns;
@@ -92,7 +92,7 @@ class MVVarSection : public MVSection {
 public:
     std::unique_ptr<std::vector<struct mv_info_var>> read();
     uint64_t generate(bool fpic, uint64_t offset, uint64_t vaddr, Section *data);
-    bool is_needed();
+    bool is_needed(bool overr);
     void set_vars(std::vector<std::shared_ptr<MVVar>> *vars);
 private:
     std::vector<std::shared_ptr<MVVar>> *vars;
@@ -102,7 +102,7 @@ class MVCsSection : public MVSection {
 public:
     std::unique_ptr<std::vector<struct mv_info_callsite>> read();
     uint64_t generate(bool fpic, uint64_t offset, uint64_t vaddr, Section *data);
-    bool is_needed();
+    bool is_needed(bool overr);
     void set_pps(std::vector<std::unique_ptr<MVPP>> *pps);
 private:
     std::vector<std::unique_ptr<MVPP>> *pps;
@@ -111,7 +111,7 @@ private:
 class MVDataSection : public MVSection {
 public:
     uint64_t generate(bool fpic, uint64_t offset, uint64_t vaddr);
-    bool is_needed();
+    bool is_needed(bool overr);
     void set_fns(std::vector<std::unique_ptr<MVFn>> *fns);
 private:
     std::vector<std::unique_ptr<MVFn>> *fns;
@@ -203,7 +203,7 @@ public:
     void print_dyn();
     void print_vars();
 
-    void init_write(const char *outfile);
+    void init_write(const char *outfile, bool del_scns);
     void write();
     void update_relocs_sym();
 

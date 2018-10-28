@@ -11,7 +11,7 @@ int main(int argc, char *argv[]) {
     auto apply_all = false;
     auto display = false;
     auto write = true;
-    auto guard = false;
+    auto guard = true;
     auto dyn = false;
     auto sym = false;
     auto mvreloc = false;
@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
             display = true;
             break;
         case 'g':
-            guard = true;
+            guard = false;
             break;
         case 'l':
             dyn = true;
@@ -56,7 +56,7 @@ int main(int argc, char *argv[]) {
                  << "-A             Apply all variables.\n"
                  << "-d             Display multiverse configuration.\n"
                  << "-h             Print help.\n"
-                 << "-g             Guard unused code.\n"
+                 << "-g             Do not guard unused code.\n"
                  << "-l             Show dynamic info.\n"
                  << "-r             Dump mvrelocs.\n"
                  << "-s var=value   Set variable to value.\n"
@@ -90,7 +90,7 @@ int main(int argc, char *argv[]) {
     if (!write)
         return 0;
 
-    bintail.init_write(outfile);
+    bintail.init_write(outfile, apply_all);
 
     for (auto& e : changes)
         bintail.change(e);

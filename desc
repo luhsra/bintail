@@ -1,0 +1,21 @@
+$ eu-readelf -S simple
+There are 41 section headers, starting at offset 0xb698:
+...
+[Nr] Name                 Type         Addr             Off      Size     ES Flags Lk Inf Al
+...
+[24] .data                PROGBITS     0000000000004050 00003050 00000040  0 WA     0   0  8
+[25] __multiverse_var_    PROGBITS     0000000000004090 00003090 00000020  0 WA     0   0  1
+[26] __multiverse_data_   PROGBITS     00000000000040b0 000030b0 00000060  0 WA     0   0 16
+[27] __multiverse_fn_     PROGBITS     0000000000004110 00003110 00000030  0 WA     0   0  1
+[28] __multiverse_callsite_ PROGBITS     0000000000004140 00003140 00000010  0 WA     0   0  1
+[29] .bss                 NOBITS       0000000000004160 00003150 00000020  0 WA     0   0 32
+[30] .comment             PROGBITS     0000000000000000 00003150 0000001a  1 MS     0   0  1
+...
+$ eu-readelf -S simple-true
+There are 37 section headers, starting at offset 0xb5c8:
+...
+[Nr] Name                 Type         Addr             Off      Size     ES Flags Lk Inf Al
+...
+[24] .data                PROGBITS     0000000000004050 00003050 00000040  0 WA     0   0  8
+[25] .bss                 NOBITS       0000000000004090 00003090 000000f0  0 WA     0   0 32
+...

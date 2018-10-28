@@ -15,7 +15,7 @@ test_flags() {
     done
 }
 
-samples=( `ls samples/*.c | sed 's/\.c$//'` samples/grep)
+samples=( `ls samples/*.c | sed 's/\.c$//'` samples/{grep,busybox})
 echo "Samples: $samples"
 
 test_flags "-d" $samples
