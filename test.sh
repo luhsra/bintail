@@ -8,14 +8,19 @@ test_flags() {
     FLAGS=(${(@s/ /)1})
     for i in $@[2,-1]
     do
-        echo " --- bintail ---"
+        if [[ $i == *extern-definition ]] || [[ $i == *fp-simple ]] || [[ $i == *function-pointer ]]
+        then
+            echo "SKIP $i"
+            continue
+        fi
+        echo " --- bintail $i ---"
         ./bintail $FLAGS $i test-`basename $i`
-        echo " --- command ---"
+        echo " --- command $i ---"
         ./test-`basename $i`
     done
 }
 
-samples=( `ls samples/*.c | sed 's/\.c$//'` samples/{grep,busybox})
+samples=( `ls samples/*.c tests/*.c | sed 's/\.c$//'` samples/{grep,busybox})
 echo "Samples: $samples"
 
 test_flags "-d" $samples
