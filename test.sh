@@ -24,5 +24,5 @@ samples=( `ls samples/*.c tests/*.c | sed 's/\.c$//'` samples/{grep,busybox})
 echo "Samples: $samples"
 
 test_flags "-d" $samples
-test_flags "-a config_first -g" $samples
-test_flags "-A -g" $samples
+test_flags "-a config_first" $samples
+test_flags "-A" $samples

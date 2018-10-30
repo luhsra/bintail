@@ -22,7 +22,7 @@ static uint64_t sym_value(vector<struct symbol> &syms, const char* name) {
             return s.name == name;
             });
     if (it == syms.cend())
-        throw std::runtime_error("Symbol not found");
+        throw std::runtime_error("Symbol "s + name + " not found");
     return it->sym.st_value;
 }
 
@@ -170,12 +170,26 @@ Bintail::Bintail(const char *infile) {
         s.name = elf_strptr(e_in, shdr.sh_link, sym.st_name);
         syms.push_back(s);
     }
+    try {
     mvvar.start_ptr = sym_value(syms, "__start___multiverse_var_ptr");
     mvvar.stop_ptr  = sym_value(syms, "__stop___multiverse_var_ptr");
     mvfn.start_ptr  = sym_value(syms, "__start___multiverse_fn_ptr");
     mvfn.stop_ptr   = sym_value(syms, "__stop___multiverse_fn_ptr");
     mvcs.start_ptr  = sym_value(syms, "__start___multiverse_callsite_ptr");
     mvcs.stop_ptr   = sym_value(syms, "__stop___multiverse_callsite_ptr");
+    } catch (...) {
+        cout << "Symbols missing, cannot be tailored\n";
+        close(infd);
+        exit(0);
+    }
+
+    int boundary_sz;
+    boundary_sz = sym_value(syms, "__stop___multiverse_var_") - sym_value(syms, "__start___multiverse_var_");
+    cout << " var=" << boundary_sz / sizeof(struct mv_info_var) << " ";
+    boundary_sz = sym_value(syms, "__stop___multiverse_fn_") - sym_value(syms, "__start___multiverse_fn_");
+    cout << " fn=" << boundary_sz  / sizeof(struct mv_info_fn) << " ";
+    boundary_sz = sym_value(syms, "__stop___multiverse_callsite_") - sym_value(syms, "__start___multiverse_callsite_");
+    cout << " cs=" << boundary_sz / sizeof(struct mv_info_callsite)  << " ";
 
     for (auto& sym : syms)
         for (auto& fn : fns)
@@ -400,6 +414,7 @@ void Bintail::write() {
     ehdr_out.e_shnum -= removed_scns;
     // Section table after sections, adjust for bss (growth in mem, 0 in file)
     ehdr_out.e_shoff -= shift;
+    cout << " shift=" << shift << "\n";
     gelf_update_ehdr(e_out, &ehdr_out);
 
     elf_fill(0xcccccccc); // asm(int 0x3) // ToDo(Felix): .dynamic fill

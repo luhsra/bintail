@@ -47,6 +47,7 @@ public:
     std::byte* out_buf(uint64_t addr);
     const std::byte* in_buf();
     const std::byte* in_buf(uint64_t addr);
+    uint64_t read_ptr(uint64_t address);
     void write_ptr(bool fpic, uint64_t address, uint64_t destination);
 
     virtual bool is_needed(bool overr);      // (in outfile)
@@ -54,7 +55,7 @@ public:
     void set_out_scn(Elf_Scn *scn_out);
 
     std::vector<GElf_Rela> relocs;
-    Elf_Scn * scn_in;
+    Elf_Scn * scn_in = nullptr;
     Elf_Scn * scn_out = nullptr;
 protected:
     size_t sz;

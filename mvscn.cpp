@@ -127,6 +127,8 @@ bool MVSection::probe_rela(GElf_Rela *rela) {
 //-----------------MVFnSection-------------------------------
 std::unique_ptr<std::vector<struct mv_info_fn>> MVFnSection::read() {
     auto v = std::make_unique<std::vector<struct mv_info_fn>>();
+    if (scn_in == nullptr) // Section does not exist
+        return v;
     auto d = elf_getdata(scn_in, nullptr);
     if (d == nullptr) // Section has no data
         return v;
@@ -189,6 +191,8 @@ void MVFnSection::set_fns(std::vector<std::unique_ptr<MVFn>> *_fns) {
 //-----------------MVVarSection-------------------------------
 std::unique_ptr<std::vector<struct mv_info_var>> MVVarSection::read() {
     auto v = std::make_unique<std::vector<struct mv_info_var>>();
+    if (scn_in == nullptr) // Section does not exist
+        return v;
     auto d = elf_getdata(scn_in, nullptr);
     if (d == nullptr) // Section has no data
         return v;
@@ -250,6 +254,8 @@ void MVVarSection::set_vars(std::vector<std::shared_ptr<MVVar>> *_vars) {
 //-----------------MVCsSection-------------------------------
 std::unique_ptr<std::vector<struct mv_info_callsite>> MVCsSection::read() {
     auto v = std::make_unique<std::vector<struct mv_info_callsite>>();
+    if (scn_in == nullptr) // Section does not exist
+        return v;
     auto d = elf_getdata(scn_in, nullptr);
     if (d == nullptr) // Section has no data
         return v;
@@ -470,6 +476,23 @@ bool Section::probe_rela(GElf_Rela *rela) {
     if ((claim = inside(rela->r_offset)))
         relocs.push_back(*rela);
     return claim;
+}
+
+uint64_t Section::read_ptr(uint64_t address) {
+    GElf_Shdr shdr;
+    gelf_getshdr(scn_out, &shdr);
+    auto d = elf_getdata(scn_out, nullptr);
+
+    auto off = address - shdr.sh_addr;
+    if (address < shdr.sh_addr)
+        throw std::runtime_error("Section read error, addr to low");
+    if (off > d->d_size)
+        throw std::runtime_error("Section read error, addr to high");
+
+    auto buf = static_cast<const uint8_t*>(d->d_buf);
+    auto dest = reinterpret_cast<const uint64_t*>(buf+off);
+
+    return *dest;
 }
 
 void Section::write_ptr(bool fpic, uint64_t address, uint64_t destination) {

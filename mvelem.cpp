@@ -302,7 +302,7 @@ MVVar::MVVar(struct mv_info_var _var, Section* rodata, Section* data)
         }
     } else {
         _value = 0;
-        cout << "Warning: Variable " << _name << " is uninitialized.\n";
+        //cout << "Warning: Variable " << _name << " is uninitialized.\n";
     }
 }
 
