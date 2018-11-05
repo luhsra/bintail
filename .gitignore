@@ -13,3 +13,4 @@ after.txt
 glibc-elf
 libelf
 ash
+build/*
