@@ -10,8 +10,9 @@ __Bintail__ is a static variability application tool for multiverse executables.
 ## Build
 
 ```bash
-$ git clone https://github.com/luhsra/bintail.git
-$ cd ./bintail
+$ git clone https://github.com/luhsra/bintail.git && cd ./bintail
+$ mkdir build && cd build
+$ cmake ..
 $ make
 ```
 
