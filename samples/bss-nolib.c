@@ -4,7 +4,7 @@
 
 #include <stdio.h>
 #ifdef MVINSTALLED
-#include <multiverse/multiverse.h>
+#include <multiverse.h>
 #else
 #include "multiverse.h"
 #endif

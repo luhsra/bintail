@@ -454,6 +454,8 @@ const std::byte* Section::in_buf() {
 const std::byte* Section::in_buf(uint64_t addr) {
     GElf_Shdr shdr;
     gelf_getshdr(scn_in, &shdr);
+    if (shdr.sh_size > addr)
+        throw std::runtime_error("Address not in section.");
     return in_buf()+(addr-shdr.sh_addr);
 }
 

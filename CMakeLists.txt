@@ -8,6 +8,10 @@ set( BINTAIL_SOURCES
     src/mvelem.cpp
 )
 
+find_package(PkgConfig REQUIRED)
+pkg_search_module(ELF REQUIRED libelf)
+pkg_search_module(MULTIVERSE REQUIRED libmultiverse)
+
 add_executable(bintail ${BINTAIL_SOURCES})
 
 set_target_properties(bintail PROPERTIES
@@ -15,9 +19,11 @@ set_target_properties(bintail PROPERTIES
     CXX_STANDARD_REQUIRED YES
 )
 
-find_package(PkgConfig REQUIRED)
-pkg_search_module(ELF REQUIRED libelf)
-
 target_link_libraries(bintail ${ELF_LIBRARIES})
-target_include_directories(bintail PUBLIC ${ELF_INCLUDE_DIRS})
+target_include_directories(bintail PUBLIC ${ELF_INCLUDE_DIRS} ${MULTIVERSE_INCLUDE_DIRS})
 
+install(TARGETS bintail DESTINATION bin)
+
+enable_testing()
+
+add_subdirectory(samples)
