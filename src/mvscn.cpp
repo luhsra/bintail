@@ -31,34 +31,6 @@ void Area::set_phdr(GElf_Phdr &_phdr, const size_t &_ndx) {
     find_start_of_area();
 }
 
-//-----------------TextArea---------------------------------------
-TextArea::TextArea(Elf *e_out, bool fpic, Section *_mvtext) :
-    Area(e_out, fpic) {
-    mvtext = _mvtext;
-}
-
-uint64_t TextArea::generate() {
-    auto area_ndx = 0ul;
-    // ToDo(Felix): this
-    return area_ndx;
-}
-
-void TextArea::find_start_of_area() {
-    GElf_Shdr shdr;
-    gelf_getshdr(mvtext->scn_in, &shdr);
-
-    area_offset_start = shdr.sh_offset;
-    area_vaddr_start = shdr.sh_addr;
-}
-
-bool TextArea::test_phdr(GElf_Phdr &phdr) {
-    return mvtext->in_segment(phdr);
-}
-
-uint64_t TextArea::size_in_file() {
-    return mvtext->size();
-}
-
 //------------------InfoArea---------------------------------------
 InfoArea::InfoArea(Elf *e_out, bool fpic, MVDataSection *_mvdata, MVVarSection *_mvvar,
         MVFnSection *_mvfn, MVCsSection *_mvcs, BssSection *_bss) :
@@ -454,8 +426,6 @@ const std::byte* Section::in_buf() {
 const std::byte* Section::in_buf(uint64_t addr) {
     GElf_Shdr shdr;
     gelf_getshdr(scn_in, &shdr);
-    if (shdr.sh_size > addr)
-        throw std::runtime_error("Address not in section.");
     return in_buf()+(addr-shdr.sh_addr);
 }
 

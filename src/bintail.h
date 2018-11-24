@@ -182,17 +182,6 @@ private:
     BssSection *bss;
 };
 
-class TextArea : public Area {
-public:
-    TextArea(Elf *e_out, bool fpic, Section *mvtext);
-    uint64_t generate();
-    void find_start_of_area();
-    bool test_phdr(GElf_Phdr &phdr);
-    uint64_t size_in_file();
-private:
-    Section *mvtext;
-};
-
 class Bintail {
 public:
     Bintail(const char *infile);
@@ -213,7 +202,6 @@ public:
     void apply_all(bool guard);
 
     std::unique_ptr<InfoArea> mvinfo_area;
-    std::unique_ptr<TextArea> mvtext_area;
 
     Section rodata;
     Section text;
@@ -230,7 +218,6 @@ public:
     MVVarSection mvvar;
     MVCsSection mvcs;
     MVDataSection mvdata;
-    Section mvtext;
 
     std::vector<std::shared_ptr<MVVar>> vars;
     std::vector<std::unique_ptr<MVFn>> fns;

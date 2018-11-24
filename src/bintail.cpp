@@ -119,11 +119,6 @@ Bintail::Bintail(const char *infile) {
         mvdata.load(mvdata_scn.value());
         scn_handler[mvdata_scn.value()] = &mvdata;
     }
-    auto mvtext_scn = get_scn(secs, "__multiverse_text_");
-    if (mvtext_scn.has_value()) {
-        mvtext.load(mvtext_scn.value());
-        scn_handler[mvtext_scn.value()] = &mvtext;
-    }
 
     /* read info sections */
     auto mvvar_infos = mvvar.read();
@@ -132,9 +127,9 @@ Bintail::Bintail(const char *infile) {
     for (auto e : *mvvar_infos)
         vars.push_back(make_unique<MVVar>(e, &rodata, &data));
     for (auto e : *mvcs_infos)
-        pps.push_back(make_unique<MVPP>(e, &text, &mvtext));
+        pps.push_back(make_unique<MVPP>(e, &text));
     for (auto e : *mvfn_infos) {
-        auto f = make_unique<MVFn>(e, &mvdata, &mvtext, &rodata);
+        auto f = make_unique<MVFn>(e, &mvdata, &text, &rodata);
         auto pp = make_unique<MVPP>(f.get());
         f->add_pp(pp.get());
         fns.push_back(move(f));
@@ -222,7 +217,7 @@ void Bintail::change(string change_str) {
 
 /**
  * Remove variance
- *  guard - replace mvtext entry of unused with 0xc3
+ *  guard - replace function body with 0xc3
  */
 void Bintail::apply(string change_str, bool guard) {
     smatch m;
@@ -230,12 +225,12 @@ void Bintail::apply(string change_str, bool guard) {
     auto var_name = m.str(1);
     for (auto& e : vars)
         if (var_name == e->name())
-            e->apply(&text, &mvtext, guard);
+            e->apply(&text, guard);
 }
 
 void Bintail::apply_all(bool guard) {
     for (auto& v : vars)
-        v->apply(&text, &mvtext, guard);
+        v->apply(&text, guard);
 }
 
 /**
@@ -248,7 +243,6 @@ void Bintail::update_relocs_sym() {
         &mvdata.relocs,
         &mvfn.relocs,
         &mvcs.relocs, 
-        &mvtext.relocs,
         &rela_other
     };
 
@@ -323,7 +317,6 @@ void Bintail::init_write(const char *outfile, bool apply_all) {
     mvcs.set_pps(&pps);
     /* MV Areas */
     mvinfo_area = make_unique<InfoArea>(e_out, fpic, &mvdata, &mvvar, &mvfn, &mvcs, &bss);
-    mvtext_area = make_unique<TextArea>(e_out, fpic, &mvtext);
 
     /* Copy & find area segments */
     size_t phdr_num;
@@ -339,13 +332,9 @@ void Bintail::init_write(const char *outfile, bool apply_all) {
             continue;
         if (mvinfo_area->test_phdr(in_phdr))
             mvinfo_area->set_phdr(in_phdr, i);
-        if (mvtext_area->test_phdr(in_phdr))
-            mvtext_area->set_phdr(in_phdr, i);
     }
     if (mvinfo_area->not_found())
         throw std::runtime_error("Could not find info area segment");
-    if (mvtext_area->not_found() && mvtext.max_sz() != 0)
-        throw std::runtime_error("Could not find text area segment");
 
     /* Copy & filter scns for new elf */
     Elf_Scn *scn_in = nullptr, *scn_out;
@@ -455,7 +444,6 @@ void Bintail::print_reloc() {
     PRINT_RELOC(mvcs, mv_info_callsite);
     PRINT_RELOC(mvfn, mv_info_fn);
     PRINT_RELOC(mvvar, mv_info_var);
-    PRINT_RELOC(mvtext, mv_info_callsite);
     PRINT_RELOC(mvdata, mv_info_callsite);
 
     cout << ANSI_COLOR_RED "\nRela other:\n" ANSI_COLOR_RESET; 

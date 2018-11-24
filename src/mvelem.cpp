@@ -79,9 +79,9 @@ static bool is_ret(const uint8_t* addr) {
     return addr[0] == 0xc3 || (addr[0] == 0xf3 && addr[1] == 0xc3);
 }
 
-MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, MVDataSection* mvdata, Section* mvtext) {
+MVmvfn::MVmvfn(struct mv_info_mvfn& _mvfn, MVDataSection* mvdata, Section* text) {
     mvfn = _mvfn;
-    auto op = reinterpret_cast<const uint8_t*>(mvtext->in_buf(mvfn.function_body));
+    auto op = reinterpret_cast<const uint8_t*>(text->in_buf(mvfn.function_body));
     // 31 c0: xor    %eax,%eax
     if ((op[0] == 0x31 && op[1] == 0xc0) && is_ret(op + 2)) {
         mvfn.type = MVFN_TYPE_CONSTANT;
@@ -175,7 +175,7 @@ void MVmvfn::probe_sym(struct symbol &sym, const string &sym_match) {
 }
 
 //---------------------MVFn----------------------------------------------------
-void MVFn::apply(Section* text, Section* mvtext, bool guard) {
+void MVFn::apply(Section* text, bool guard) {
     auto pfn = find_if(mvfns.begin(), mvfns.end(), [](auto& mfn)
             { return mfn->assign_vars_frozen() && mfn->active(); });
     if (pfn == mvfns.end())
@@ -183,11 +183,11 @@ void MVFn::apply(Section* text, Section* mvtext, bool guard) {
     if (guard) {
         for (auto& e : mvfns)
             if (e.get() != pfn.base()->get())
-                mvtext->fill(e->location(), byte{0xcc}, e->size());
-        mvtext->fill(location(), byte{0xcc}, symbol.sym.st_size); // overriden by pp
+                text->fill(e->location(), byte{0xcc}, e->size());
+        text->fill(location(), byte{0xcc}, symbol.sym.st_size); // overriden by pp
     }
     for (auto& p : pps) 
-        p->patchpoint_apply(&(pfn->get()->mvfn), text, mvtext);
+        p->patchpoint_apply(&(pfn->get()->mvfn), text);
     frozen = true;
 }
 
@@ -229,7 +229,7 @@ void MVFn::add_pp(MVPP* pp) {
     pps.push_back(pp);
 }
 
-MVFn::MVFn(struct mv_info_fn& _fn, MVDataSection *mvdata, Section *mvtext, Section *rodata)
+MVFn::MVFn(struct mv_info_fn& _fn, MVDataSection *mvdata, Section *text, Section *rodata)
     :frozen{false} {
     fn = _fn;
     name = rodata->get_string(fn.name);
@@ -240,7 +240,7 @@ MVFn::MVFn(struct mv_info_fn& _fn, MVDataSection *mvdata, Section *mvtext, Secti
     auto mvfn_array = reinterpret_cast<const struct mv_info_mvfn*>
         (mvdata->in_buf(fn.mv_functions));
     for_each(mvfn_array, mvfn_array+fn.n_mv_functions, [&](auto minfo)
-            { mvfns.push_back(make_unique<MVmvfn>(minfo, mvdata, mvtext));} );
+            { mvfns.push_back(make_unique<MVmvfn>(minfo, mvdata, text));} );
 }
 
 void MVFn::probe_var(MVVar* var) {
@@ -347,10 +347,10 @@ uint64_t MVVar::location() {
     return var.variable_location;
 }
 
-void MVVar::apply(Section* text, Section* mvtext, bool guard) {
+void MVVar::apply(Section* text, bool guard) {
     frozen = true;
     for (auto& f : fns)
-        f->apply(text, mvtext, guard);
+        f->apply(text, guard);
 }
 
 //---------------------MVPP---------------------------------------------------
@@ -368,9 +368,9 @@ MVPP::MVPP(MVFn* fn) : _fn{fn} {
     function_body = 0;
 }
 
-MVPP::MVPP(struct mv_info_callsite& cs, Section* text, Section* mvtext) {
+MVPP::MVPP(struct mv_info_callsite& cs, Section* text) {
     function_body = cs.function_body;
-    decode_callsite(cs, (text->inside(cs.call_label) ? text : mvtext));
+    decode_callsite(cs, text);
 }
 
 size_t MVPP::make_info(bool fpic, byte* buf, Section* sec, uint64_t vaddr) {
@@ -412,9 +412,8 @@ uint64_t MVPP::decode_callsite(struct mv_info_callsite& cs, Section* text) {
     return callee;
 }
 
-void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* mvtext) {
-    auto txt = (text->inside(pp.location) ? text : mvtext );
-    auto op = reinterpret_cast<unsigned char*>(txt->out_buf(pp.location));
+void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text) {
+    auto op = reinterpret_cast<unsigned char*>(text->out_buf(pp.location));
     uint32_t offset;
     switch(pp.type) {
         case PP_TYPE_X86_JUMP:
@@ -459,7 +458,7 @@ void MVPP::patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* m
         default:
             throw std::runtime_error("Could not apply patchpoint.");
     } 
-    auto d = elf_getdata(txt->scn_out, nullptr); // Implizit diry_buf ?
+    auto d = elf_getdata(text->scn_out, nullptr); // Implizit diry_buf ?
     elf_flagdata(d, ELF_C_SET, ELF_F_DIRTY);
 }
 

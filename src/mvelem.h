@@ -109,7 +109,7 @@ public:
     void probe_var(MVVar* var);
     void probe_sym(struct symbol &sym);
     void add_pp(MVPP* pp);
-    void apply(Section* text, Section* mvtext, bool guard);
+    void apply(Section* text, bool guard);
     size_t make_mvdata(bool fpic, std::byte* buf, MVDataSection* mvdata, uint64_t vaddr);
     void set_mvfn_vaddr(uint64_t vaddr);
 
@@ -160,7 +160,7 @@ public:
     void print();
     void link_fn(MVFn* fn);
     void set_value(int v, Section* data);
-    void apply(Section* text, Section* mvtext, bool guard);
+    void apply(Section* text, bool guard);
     uint64_t location();
 
     std::string& name() { return _name; }
@@ -199,12 +199,12 @@ struct mv_patchpoint {
 class MVPP : public MVData {
 public:
     MVPP(MVFn* fn);
-    MVPP(struct mv_info_callsite& cs, Section* text, Section* mvtext);
+    MVPP(struct mv_info_callsite& cs, Section* text);
     void print();
     void set_fn(MVFn* fn);
     size_t make_info(bool fpic, std::byte* buf, Section* scn, uint64_t vaddr);
     uint64_t decode_callsite(struct mv_info_callsite& cs, Section* text); // ret callee
-    void patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text, Section* mvtext);
+    void patchpoint_apply(struct mv_info_mvfn *mvfn, Section* text);
     void patchpoint_size(void **from, void** to);
 
     struct mv_patchpoint pp;
