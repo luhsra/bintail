@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 project(bintail)
 
+set(default_build_type "Debug")
+
 set( BINTAIL_SOURCES
     src/bintail.cpp
     src/main.cpp
