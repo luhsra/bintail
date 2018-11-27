@@ -12,7 +12,7 @@
 #include <gelf.h>
 #include <regex>
 
-#include "bintail.h"
+#include <bintail/bintail.h>
 #include "mvelem.h"
 
 using namespace std;

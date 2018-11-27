@@ -10,7 +10,7 @@
 #include <memory>
 #include <set>
 
-#include "bintail.h"
+#include <bintail/bintail.h>
 #include "mvelem.h"
 
 using namespace std;

@@ -5,7 +5,7 @@
 
 using namespace std;
 
-#include "bintail.h"
+#include <bintail/bintail.h>
 
 int main(int argc, char *argv[]) {
     auto apply_all = false;
